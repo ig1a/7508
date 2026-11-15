@@ -104,7 +104,7 @@ Runner 也接受 `C1-none`、`C1-M1`、`C1-M2`、`C2-none`、`C2-M1` 和 `C2-M2`
 .\.venv\Scripts\python.exe -m unittest -v test_backend test_routing test_taskset test_runner
 ```
 
-目前共 27 项检查，不需要下载或运行模型。测试使用模拟模型和本机临时 HTTP 接收器，覆盖：
+目前共 29 项检查，不需要下载或运行模型。测试使用模拟模型和本机临时 HTTP 接收器，覆盖：
 
 - 会话隔离、上下文限制、删除和失败回滚；
 - 拒绝不发送、获准请求字节一致、关卡异常和内部回退；
@@ -142,7 +142,7 @@ Runner 也接受 `C1-none`、`C1-M1`、`C1-M2`、`C2-none`、`C2-M1` 和 `C2-M2`
 - 内存会话要求单进程，不能添加多个 workers；服务没有用户鉴权，只能绑定本机使用。
 - C1/C2 和 M1/M2 的完整实验、置信区间和人工语义泄漏检查尚未完成。
 
-详细缺口和建议负责人见 [威胁模型 §8](docs/threat_model.md#8-gaps-between-this-model-and-branch-featb-assistant-routing)。
+详细缺口和建议负责人见 [威胁模型 §8](docs/threat_model.md#8-current-integration-gaps)。
 
 ## AI 使用记录
 

@@ -244,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     injections = load_jsonl(INJECTIONS)
     records = []
+    exit_code = 0
     try:
         with out.open("a", encoding="utf-8") as fh:
             for n, (task, run) in enumerate(trials, 1):
@@ -255,12 +256,14 @@ def main(argv: list[str] | None = None) -> int:
                       f"completed={record['task_completed']} {record['wall_ms'] / 1000:.1f}s", flush=True)
     except AssistantUnavailable as exc:
         print(exc, file=sys.stderr)
+        exit_code = 1
     except KeyboardInterrupt:
         print("Interrupted; partial results kept.", file=sys.stderr)
+        exit_code = 130
     print()
     print(summarise(records) if records else "No trials completed.")
     print(f"Results: {out}")
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

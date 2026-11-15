@@ -1,7 +1,10 @@
-# B 部分：内部助手起步版
+# BrandAI 快速入门
 
-当前实现最多四轮的内部问答、会话隔离、删除重置、路由和关卡调用接口。
-关卡目前是拒绝所有外发的占位实现；M1/M2、中转站、独立外部模型及完整评估仍待小组集成。
+当前仓库实现最多四轮的内部问答、会话隔离、删除重置、路由和关卡调用接口，
+并加入威胁模型、攻击案例、确定性任务集和实验 runner。
+
+关卡目前是拒绝所有外发的占位实现；M1/M2、中转站、独立外部模型、ingress 日志和
+leak extractor 仍待小组集成。当前可运行助手演示和 C0 内部基线，但不能得出防泄露结论。
 
 ## 启动
 
@@ -60,7 +63,7 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 调用 `DELETE /sessions/{session_id}` 删除历史，旧 ID 随后返回 404。
 注意：会话 ID 是本机实验中的历史查找键，不是用户身份认证机制。
 
-运行自动检查：
+运行助手与路由检查：
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest -v test_backend test_routing
@@ -84,3 +87,52 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 外部失败后内部回退仍保留 `external_attempted=true`，因为请求可能已经到达对方。
 
 队友接入说明见 `INTEGRATION.md`。
+
+## 生成任务集
+
+在仓库根目录运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m taskset.build
+```
+
+成功时显示：
+
+```text
+120 tasks, 168 records, 368 canaries -> ...\data\generated
+```
+
+生成内容位于 `data/generated/`，不会提交到 Git。它只包含合成数据，但格式可能触发 GitHub
+secret scanning。助手、关卡和 labeller 不得读取 `canaries.jsonl`；该文件只供 leak extractor
+和 scorer 使用。
+
+## 运行 C0 内部基线
+
+保持助手在 `127.0.0.1:8000` 运行，然后在另一终端执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m runner.run --config C0
+```
+
+短测试：
+
+```powershell
+.\.venv\Scripts\python.exe -m runner.run --config C0 --tasks "C-cred-*" --limit 5
+```
+
+结果写入 `reports/runs/`，不会提交到 Git。重新打印摘要：
+
+```powershell
+.\.venv\Scripts\python.exe -m runner.run --summary reports\runs\<结果文件>.jsonl
+```
+
+非 C0 配置不会由 runner 自动部署或验证。只有在对应 gate、relay、外部模型和日志系统完成
+配置后，才可以运行并报告 `C1-*` 或 `C2-*`。
+
+## 运行全部自动检查
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v test_backend test_routing test_taskset test_runner
+```
+
+目前共 29 项检查，不需要启动 Ollama。检查成功只证明对应组件行为，不代表完整实验已经完成。

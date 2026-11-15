@@ -1,6 +1,6 @@
 # Threat Model — Provider-Side Forwarding Gate (BrandAI)
 
-Owner: Yau Hung Kei · Status: draft for team review · Source: proposal §1–§4, branch `feat/b-assistant-routing`
+Status: draft for team review · Source: proposal §1–§4 and the current assistant/routing interface
 
 This document fixes what the experiment defends, against whom, under which assumptions, and how each
 threat maps to a configuration and a measurement. Anything not listed here is out of scope; a result
@@ -230,23 +230,23 @@ Implemented and enforced by `taskset/` — see [task_format.md](task_format.md).
 
 ---
 
-## 8. Gaps between this model and branch `feat/b-assistant-routing`
+## 8. Current integration gaps
 
 | Gap | Needed for | Proposed owner |
 |---|---|---|
-| No `none` gate; the gate is hard-coded to `PlaceholderGate` | C1-none, C2-none, M1/M2 selection | Integration (Yau) + Song |
+| No `none` gate; the gate is hard-coded to `PlaceholderGate` | C1-none, C2-none, M1/M2 selection | Integration + assistant/routing |
 | No label input in `ChatRequest`; no session label state; reset does not clear labels | M2, P5, AA7 | Song + Sun |
 | No trial ID linking assistant, relay and ingress logs | Leak attribution | Integration + Duan |
 | No relay at `:11435`; no external Ollama or ingress log | B3/B4 sensors | Duan |
 | No persistent gate audit log | P6, T10 | Sun |
-| No runner implementing the compliance-turn rule (§5.1) | T4 | Yau + Li |
-| 2,000-character message and 12,000-byte session limits | Excerpt and base64 tasks must fit | Yau (task design) |
+| Runner configuration names are recorded but not attested against the deployed gate/relay | Valid C1/C2 and M1/M2 attribution | Evaluation runner + integration |
+| 2,000-character message and 12,000-byte session limits | Excerpt and base64 tasks must fit | Task-set design |
 | System prompt in Chinese | Task language must be consistent | Team decision |
 | AA3 unverified for future features (tools, retries) | P1 | Integration review |
 
 ## 9. Open questions for the team
 
-1. Confirm the compliance-turn rule (§5.1), or choose LLM-persona-only for T4.
+1. Approve the scripted compliance-turn rule now implemented in the runner (§5.1), or replace it with an LLM persona for T4.
 2. Task language: Chinese, to match the current system prompt, or switch the prompt to English?
 3. External endpoint port and log format (proposed `:11436`, JSON lines with a trial ID).
 4. Does the external provider count as a separate leak recipient in the headline metric, or only the relay?

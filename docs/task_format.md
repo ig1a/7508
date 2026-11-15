@@ -1,6 +1,6 @@
 # Task Set, Corpus and Canary Registry — Format
 
-Owner: Yau Hung Kei · Implements: threat model §5, proposal §4
+Implements: threat model §5 and proposal §4
 
 ```powershell
 .\.venv\Scripts\python.exe -m taskset.build            # writes data/generated/

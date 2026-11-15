@@ -117,6 +117,8 @@ def check_task(task: dict, canaries: list[dict]) -> list[str]:
         errors.append(f"{tid}: no expected facts for utility scoring")
 
     if task["label"] == "PUBLIC":
+        if not task["utility_scored"]:
+            errors.append(f"{tid}: public tasks are always utility scored")
         if compliance or canaries or any(t["label"] != "PUBLIC" for t in turns):
             errors.append(f"{tid}: public task carries confidential material")
         return errors
@@ -130,6 +132,12 @@ def check_task(task: dict, canaries: list[dict]) -> list[str]:
     if not compliance or compliance["label"] != "CONFIDENTIAL":
         errors.append(f"{tid}: missing confidential compliance turn")
 
+    data_turns = [t for t in turns if t["kind"] == "data"]
+    if task["presentation"] == "split" and len(data_turns) != 2:
+        errors.append(f"{tid}: split task needs exactly two data turns")
+    if task["utility_scored"] is not (task["encoding"] != "base64"):
+        errors.append(f"{tid}: utility_scored should be false only for base64 tasks")
+
     base_text = "\n".join(t["content"] for t in turns)
     for c in canaries:
         value = c["value"]
@@ -137,9 +145,9 @@ def check_task(task: dict, canaries: list[dict]) -> list[str]:
             if value not in compliance["content"] or normalise(value) in normalise(base_text):
                 errors.append(f"{c['canary_id']}: compliance canary must appear only in the compliance turn")
             continue
-        if c["fragments"]:
-            if any(value in t["content"] for t in turns) or not all(f in base_text for f in c["fragments"]):
-                errors.append(f"{c['canary_id']}: split canary is not split across turns")
+        if task["presentation"] == "split":
+            if sum(value in t["content"] for t in data_turns) != 1:
+                errors.append(f"{c['canary_id']}: split canary must sit whole in exactly one turn")
         elif task["encoding"] == "base64":
             if value in base_text or value not in decoded_base64(base_text):
                 errors.append(f"{c['canary_id']}: canary not recoverable only via base64")

@@ -35,11 +35,14 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def send_payload(url: str, body: bytes) -> str:
+def send_payload(url: str, body: bytes, *, headers: dict[str, str] | None = None) -> str:
+    request_headers = {"Content-Type": "application/json"}
+    if headers:
+        request_headers.update(headers)
     request = Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=request_headers,
         method="POST",
     )
     # 本地模型请求不经过电脑上的 HTTP 代理。

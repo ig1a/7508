@@ -7,7 +7,7 @@ import os
 from gate import ForwardingGate, GateDecision, OutboundRequest, SecurityForwardingGate
 from model_backend import ModelBackendError, build_payload, generate_answer, send_payload
 
-# 为队友的中转站预留独立端口，不与内部 Ollama 的 11434 混用。
+# 为中转站预留独立端口，不与内部 Ollama 的 11434 混用。
 # Relay 由小组另行提供；保留原有默认端口。
 EXTERNAL_CHAT_URL = os.environ.get("BRANDAI_RELAY_URL", "http://127.0.0.1:11435/api/chat")
 gate: ForwardingGate = SecurityForwardingGate()

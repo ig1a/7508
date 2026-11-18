@@ -5,3 +5,17 @@ __pycache__/
 .venv-*/
 reports/
 *.log
+
+
+.env.*
+*.zip
+*.bak
+*.tmp
+data/generated/
+canaries.jsonl
+relay_events.jsonl
+provider_ingress.jsonl
+security_audit.jsonl
+provenance_audit.jsonl
+*.gguf
+*.safetensors

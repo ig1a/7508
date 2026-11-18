@@ -1,0 +1,12 @@
+﻿group_type,group_name,flagged,total,flagged_fraction,incomplete
+label,CONFIDENTIAL,61,80,0.7625,0
+label,PUBLIC,5,40,0.125,0
+asset,connection_string,18,20,0.9,0
+asset,credential,20,20,1.0,0
+asset,document_excerpt,3,20,0.15,0
+asset,personal_record,20,20,1.0,0
+asset,public,5,40,0.125,0
+presentation,encoded,16,20,0.8,0
+presentation,file_excerpt,15,20,0.75,0
+presentation,split,15,20,0.75,0
+presentation,verbatim,20,60,0.333333,0

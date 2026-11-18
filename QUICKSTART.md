@@ -1,4 +1,4 @@
-# B 部分：内部助手起步版
+# 内部助手快速入门
 
 当前实现最多四轮的内部问答、会话隔离、删除重置、路由和关卡调用接口。
 关卡目前是拒绝所有外发的占位实现；M1/M2、中转站、独立外部模型及完整评估仍待小组集成。
@@ -79,8 +79,8 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 不传 `route_mode` 默认走 `internal_only`，关卡显示 `not_checked`。
 
 这只能证明路由接线和回退工作，不能证明敏感内容检测有效：当前占位关卡也拒绝公开任务。
-`external_attempted` 只表示是否调用了发送函数；外部真正收到什么必须由队友的 ingress 日志确认。
+`external_attempted` 只表示是否调用了发送函数；外部真正收到什么必须由接收端 ingress 日志确认。
 `gate_latency_ms` 仅计算检查耗时；`latency_ms` 包含排队、模型加载和推理等整个处理时间。
 外部失败后内部回退仍保留 `external_attempted=true`，因为请求可能已经到达对方。
 
-队友接入说明见 `INTEGRATION.md`。
+接口说明见 `INTEGRATION.md`。

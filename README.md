@@ -1,9 +1,9 @@
-# DASE7508 — BrandAI B 模块
+# DASE7508 — D 模块 Security Gateway
 
-本分支实现小组项目中 B 成员负责的助手、会话管理、路由和模型后端。
+本分支实现 D 模块 Security Gateway，并接入现有助手、会话管理、路由和模型后端。
 当前可演示：本地模型问答 → 多轮记忆 → 提议外部调用 → Gateway 检查 → 内部回退。
 
-**已接入 M1 内容检测和 M2 会话来源标签。完整中转站和独立外部模型仍需队友接入。**
+**已接入 M1 内容检测和 M2 会话来源标签。完整中转站和独立外部模型仍待接入。**
 本分支的结果是组件验证，不能作为防泄露实验结论。
 
 ## 环境与首次安装
@@ -21,7 +21,7 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 
 也可用 `scripts/setup.ps1` 创建虚拟环境并安装 Python 依赖。
 Ollama 从 https://ollama.com/download/windows 安装，模型约 2.5 GB。
-本机安装路径为 `D:\Ollama`；队友无需使用相同路径，但必须启动本机 Ollama 服务。
+本机安装路径为 `D:\Ollama`；安装路径可自定义，但必须启动本机 Ollama 服务。
 如命令未找到，可新开终端或使用实际安装路径调用 `ollama.exe`。
 
 ## 启动与一键演示
@@ -70,7 +70,7 @@ Ollama 从 https://ollama.com/download/windows 安装，模型约 2.5 GB。
 | `test_backend.py`、`test_routing.py` | 组件和本地传输检查 |
 | `scripts/demo.py` | 调用真实模型的一键演示 |
 
-队友接口及尚未完成事项见 [INTEGRATION.md](INTEGRATION.md)。
+接口及待集成事项见 [INTEGRATION.md](INTEGRATION.md)。
 内存会话要求单进程，不能添加多个 workers；服务未实现用户鉴权，仅绑定本机使用。
 这是开发原型；来源标签和元数据审计已接入，完整实验仍需 Runner/Relay 联调。
 
@@ -104,6 +104,5 @@ python -m evaluation.benchmark_m1 --tasks data/generated/tasks.jsonl
 
 evaluation/results/ 保存用户最终验证评估包中的脱敏统计。验收共 16 Relay、16 Provider、17 Gate audit 事件。仅对整个 Trial 都拒绝的样本支持有限零外发结论；混合 ALLOW/DENY Trial 缺少 Turn ID，不能推导每轮确切字节。Public 0/0 canaries 为 N/A。Relay/Provider 是本地模拟边界，不是独立云服务。旧批次因 Trial ID 缺失产生的零泄漏率无效。
 
-A 分支 Runner 当前仅发送 message/route_mode 和 Trial ID，负责人需在既有实现中添加认证头、来源标签、gate_mode 和 relay_mode；不能仅凭配置名称声称运行了 M1/M2/none。本 PR 不复制 runner/、taskset/、威胁模型或 Relay。合并 A 分支时保留其 README 和忽略规则并合并本节。QUICKSTART/INTEGRATION 中占位关卡描述属于 B 模块初始说明，当前 Gateway 接口以本节为准。
+A 分支 Runner 当前仅发送 message/route_mode 和 Trial ID，现有实现还需添加认证头、来源标签、gate_mode 和 relay_mode；不能仅凭配置名称声称运行了 M1/M2/none。本 PR 不复制 runner/、taskset/、威胁模型或 Relay。合并 A 分支时保留其 README 和忽略规则并合并本节。QUICKSTART/INTEGRATION 中占位关卡描述属于初始接口说明，当前 Gateway 接口以本节为准。
 
-不要提交原始日志、生成任务、canaries、凭据、环境变量值、备份、历史 ZIP 或模型文件。

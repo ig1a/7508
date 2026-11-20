@@ -19,4 +19,6 @@ def is_trusted_runner(provided_token: str | None, expected_token: str | None = N
     expected = expected_token if expected_token is not None else configured_runner_token()
     if not expected or not provided_token:
         return False
+    if not expected.isascii() or not provided_token.isascii():
+        return False
     return hmac.compare_digest(provided_token, expected)

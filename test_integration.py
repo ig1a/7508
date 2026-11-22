@@ -12,9 +12,11 @@ from unittest.mock import patch
 from integration_stack import local_stack
 from model_backend import build_payload, send_payload
 from provider import make_provider
+from runner import leakscan
 from runner.run import Client, run_trial
 from scripts.integration_smoke import INJECTION, task, read_jsonl
 from sessions import store
+from taskset.build import build as build_taskset
 
 
 @contextmanager
@@ -88,6 +90,25 @@ class IntegratedHttpTests(unittest.TestCase):
                 self.assertEqual(record["status"], "ok")
                 row = self.rows("relay", record["trial_id"])[-1]
                 self.assertEqual(row["rewrite"]["applied"], mode == "C2-none")
+
+    def test_task_set_trials_are_scored_by_part_c_extractor(self):
+        built = build_taskset()
+        task_spec = next(t for t in built["tasks"] if t["task_id"] == "C-cred-verbatim-debug")
+        primary = next(c for c in built["canaries"] if c["task_id"] == task_spec["task_id"] and c["role"] == "primary")
+        records = [run_trial(self.client, task_spec, config, 1, [INJECTION]) for config in ("C1-none", "C1-M1_M2")]
+        self.assertEqual([r["status"] for r in records], ["ok", "ok"])
+        with tempfile.TemporaryDirectory() as directory:
+            canaries = Path(directory) / "canaries.jsonl"
+            canaries.write_text("".join(json.dumps(c) + "\n" for c in built["canaries"]), encoding="utf-8")
+            logs = {r: self.stack.output / f"{r}.jsonl" for r in ("relay", "provider")}
+            with patch.object(leakscan, "CANARIES", canaries):
+                summary = leakscan.scan_batch(records, Path(directory) / "batch.jsonl", logs)
+        by_trial = {t["task_id"]: t for t in summary["tasks"]}
+        for recipient in ("relay", "provider"):
+            self.assertEqual(by_trial["C1-none:C-cred-verbatim-debug:r1"]["first_hits"][recipient], {primary["canary_id"]: 1})
+            self.assertEqual(by_trial["C1-M1_M2:C-cred-verbatim-debug:r1"][f"{recipient}_leaked"], 0)
+        self.assertEqual(summary["log_lines"], {"relay": 2, "provider": 2})
+        self.assertEqual(summary["tasks_missing_from_manifest"], [])
 
     def test_checked_request_bytes_reach_independent_provider_without_auth_token(self):
         trial = "C1-none:bytes:r1"

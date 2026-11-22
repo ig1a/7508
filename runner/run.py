@@ -9,6 +9,7 @@ The assistant (and for C1/C2 the relay, gate and external model) must already be
 For C1/C2, the assistant and runner share BRANDAI_RUNNER_TOKEN; the runner sends the trusted
 per-turn source label and requested gate/relay modes, and checks that the assistant echoes them.
 Output goes to reports/runs/ (git-ignored) because answers contain the synthetic secrets.
+After a C1/C2 run the batch is scored for canary leakage with runner.leakscan (skip with --no-scan).
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
+from runner import leakscan
 from security_gateway.trial import is_valid_trial_id
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -247,6 +249,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--summary", type=Path, help="only summarise an existing results file")
+    parser.add_argument("--log", action="append", metavar="NAME=PATH",
+                        help="relay/provider logs for the C1/C2 leak scan (see runner.leakscan)")
+    parser.add_argument("--no-scan", action="store_true", help="skip the leak scan after C1/C2 runs")
     args = parser.parse_args(argv)
 
     if args.summary:
@@ -311,6 +316,15 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(summarise(records) if records else "No trials completed.")
     print(f"Results: {out}")
+    if records and args.config != "C0" and not args.no_scan:
+        if not leakscan.CANARIES.exists():
+            print("Canary registry not found; leak scan skipped.", file=sys.stderr)
+            return exit_code or 1
+        print()
+        summary = leakscan.scan_batch(records, out, leakscan.parse_logs(args.log))
+        leakscan.print_summary(summary)
+        print(leakscan.report(summary))
+        print(f"Leak report: {out.with_suffix('')}.leak.json")
     return exit_code
 
 

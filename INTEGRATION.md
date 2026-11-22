@@ -1,18 +1,22 @@
 # Module Interface Specification
 
-*English version first; the original Chinese text is kept below under "中文原文 (Chinese original)".*
+*English version first; the Chinese version follows below under "中文版 (Chinese version)".*
+
+Interfaces between the modules on the integrated branch: the runner (A) calls the assistant API (B),
+which calls the Security Gateway (D) in-process and sends approved requests through the relay (C) to
+the provider (B). Running the full stack is described in [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md).
 
 ## Current boundaries
 
 `main.py` handles HTTP, experiment-request authentication and session labels; `routing.py` handles
 path selection, the gate call and sending; `gate.py` defines the protocol and exports
-`SecurityForwardingGate`; `model_backend.py` wraps Ollama requests. The service is for local
+`SecurityForwardingGate` (implemented in `security_gateway/`); `model_backend.py` wraps Ollama requests. The service is for local
 experiments only and has no user login or authentication; trusted source labels and experiment
 control fields are authenticated with `X-Experiment-Token`.
 
 The internal address is `http://127.0.0.1:11434/api/chat`. The external address is configured with
-`BRANDAI_RELAY_URL`, default `http://127.0.0.1:11435/api/chat`. This branch connects `relay7508/`
-and adds `provider.py` (11436), whose upstream is an independent Ollama (11437). The internal address
+`BRANDAI_RELAY_URL`, default `http://127.0.0.1:11435/api/chat`, where module C's relay
+(`relay7508/`) listens; its upstream is module B's `provider.py` (11436), whose upstream is an independent Ollama (11437). The internal address
 can be configured with `BRANDAI_INTERNAL_URL`, and the provider refuses to reuse that internal
 endpoint. External requests use Ollama's native chat JSON; if a receiver uses another protocol, the
 request builder and the inspection contract must be adapted. Internal and external sides should use
@@ -166,22 +170,24 @@ does not delete audit records already appended.
 - On 2026-11-22, 10 real two-model integration scenarios were run, checking both receivers' records,
   mode execution, the audit, trial-ID correlation and leak extraction. The scope is fixed fictional
   scenarios, not a full statistical experiment; steps and report notes are in
-  docs/B_INTEGRATION.md.
+  [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md).
 
 ---
 
-## 中文原文 (Chinese original)
+## 中文版 (Chinese version)
 
 ### 模块接口说明
+
+集成分支上各模块之间的接口：Runner（A）调用助手 API（B）；助手在进程内调用 Security Gateway（D），并把获准的请求经中转站（C）发送到 Provider（B）。运行完整链路的步骤见 [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)。
 
 #### 当前边界
 
 `main.py` 管理 HTTP、实验请求认证和会话标签；`routing.py` 负责路径选择、关卡调用及发送；
-`gate.py` 定义协议并导出 `SecurityForwardingGate`；`model_backend.py` 封装 Ollama 请求。
+`gate.py` 定义协议并导出 `SecurityForwardingGate`（实现位于 `security_gateway/`）；`model_backend.py` 封装 Ollama 请求。
 服务仅供本机实验，没有用户登录鉴权；可信来源标签及实验控制字段已使用 `X-Experiment-Token` 认证。
 
 内部地址是 `http://127.0.0.1:11434/api/chat`。
-外部地址通过 `BRANDAI_RELAY_URL` 配置，默认 `http://127.0.0.1:11435/api/chat`。本分支已接入 `relay7508/`，新增 `provider.py`（11436），其上游是独立 Ollama（11437）。内部地址可用 `BRANDAI_INTERNAL_URL` 配置，Provider 拒绝复用该内部端点。
+外部地址通过 `BRANDAI_RELAY_URL` 配置，默认 `http://127.0.0.1:11435/api/chat`。C 模块的中转站（`relay7508/`）在此监听；其上游是 B 模块的 `provider.py`（11436），Provider 的上游是独立 Ollama（11437）。内部地址可用 `BRANDAI_INTERNAL_URL` 配置，Provider 拒绝复用该内部端点。
 外部请求使用 Ollama 原生 chat JSON；若接收端采用其他协议，需要适配请求构建与检查契约。
 内部和外部应使用独立端点、状态和日志；可以采用相同权重，但不能直接把外部路由接回内部端点。
 
@@ -284,4 +290,4 @@ none 模式和 internal_only 路径不产生 Gateway 检查审计；来源标签
 - 预注册主矩阵为七个配置（4,200 trials）；`C1-M1_M2` 和 `C2-M1_M2` 仅用于补充组合策略验收，单独报告。
 - Relay 已处理 X-Relay-Mode，将 X-Trial-Id 传播至 Provider；两端日志按完整 Trial ID 区分重复试验。Provider 接收非流式 Ollama chat JSON，先写 ingress 再调用独立外部模型。上游失败不抹去已收到请求的证据。
 - 既有自动测试覆盖拒绝不发送、异常关闭、获准请求字节一致、后续轮次重新检查、重定向阻止、外部失败回退、来源标签和认证。真实 M1 插件测试另需检测依赖、英文模型和生成的任务输入，安装与测试命令见 `QUICKSTART.md`。
-- 2026-11-22 已跑通 10 个真实双模型集成场景，核对两端接收记录、模式执行、审计、Trial-ID 关联及泄漏提取。范围为固定虚构场景，不等于完整统计实验；步骤和报告说明见 docs/B_INTEGRATION.md。
+- 2026-11-22 已跑通 10 个真实双模型集成场景，核对两端接收记录、模式执行、审计、Trial-ID 关联及泄漏提取。范围为固定虚构场景，不等于完整统计实验；步骤和报告说明见 [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)。

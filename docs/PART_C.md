@@ -1,13 +1,13 @@
 # Module C: Relay and Leak Extraction
 
-*English version first; the original Chinese text is kept below under "中文原文 (Chinese original)".*
+*English version first; the Chinese version follows below under "中文版 (Chinese version)".*
 
-> B integration branch update: the router now sends X-Trial-Id and X-Relay-Mode; the relay switches
-> mode per request and isolates logs and injection counts by full trial ID. Headerless clients still
-> use the opening-based derivation described below. An independent provider.py and a real two-model
-> integration have been added; see [B_INTEGRATION.md](B_INTEGRATION.md) for the latest steps. The
-> "pending integration / no-gate control not implemented" notes below are the C branch's original
-> description.
+> Status on the integrated branch (`feat/a-integration`): the router sends X-Trial-Id and
+> X-Relay-Mode; the relay switches mode per request and isolates logs and injection counts by full
+> trial ID, so the opening-based derivation in §3 is only a fallback for headerless clients. Module
+> B's `provider.py` (11436) is the relay's upstream, with an independent Ollama on 11437. Module A's
+> `runner/leakscan.py` builds the task manifest (§6 item 3) from the task set and runs `scan` after
+> every C1/C2 batch. See [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) for running the full stack.
 
 Covers items 2 (relay / transfer station) and 5 (leak extractor) of the proposal's §3 "Build".
 Implemented with the standard library only (`http.server` + `http.client`), so any teammate's machine
@@ -129,19 +129,24 @@ appending with `rewrite` bookkeeping, `min_turn` leaving the first turn unchange
 - SSE streaming is not supported (BrandAI fixes `stream: false`, which is enough for now);
 - `mitm_addon.py` is an optional HTTPS version that has only been verified for import and logic reuse,
   never actually run;
-- The real backend (Ollama + provider wrapper) has not yet been integrated; ports and protocol follow
-  the `INTEGRATION.md` convention;
 - The relay does not retry or follow redirects; on upstream failure it logs the error and returns 502;
-- There is currently no "no-gate" control: that belongs to the backend's `routing.py`, and A/B need to
-  decide whether to add an experiment switch.
+- Active mode appends a single configured text (`active.append_text`, aligned with A's INJ-01); the
+  other five injections in `data/attacks/injections.jsonl`, including the prepended INJ-03 and the
+  label-laundering INJ-04, are not yet supported;
+- Matching covers exact, case-folded, whitespace-removed, URL-encoded and base64 forms; near-matches
+  and paraphrases are not detected.
+
+Resolved since the C branch: the real backend (Ollama + provider wrapper) is integrated and was
+validated with real models on 2026-11-22, and the no-gate control exists as `gate_mode=none`
+(configurations C1-none and C2-none).
 
 ---
 
-## 中文原文 (Chinese original)
+## 中文版 (Chinese version)
 
 ### C 模块：中转站与泄漏提取
 
-> B 集成分支更新：当前 Router 已发送 X-Trial-Id 与 X-Relay-Mode；Relay 按每个请求的模式切换，并按完整 Trial ID 隔离日志与注入次数。无头客户端仍使用下文的 opening 推导路径。独立 provider.py 和真实双模型联调已加入，最新步骤见 [B_INTEGRATION.md](B_INTEGRATION.md)；下文“待对接/无关卡未实现”是 C 分支初始说明。
+> 集成分支（`feat/a-integration`）现状：Router 发送 X-Trial-Id 与 X-Relay-Mode；Relay 按每个请求的模式切换，并按完整 Trial ID 隔离日志与注入次数，因此 §3 的 opening 推导只作为无头客户端的后备。B 模块的 `provider.py`（11436）是中转站的上游，其后是独立 Ollama（11437）。A 模块的 `runner/leakscan.py` 根据任务集生成任务清单（§6 第 3 项），并在每个 C1/C2 批次后运行 `scan`。运行完整链路见 [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md)。
 
 对应提案 §3 "Build" 的第 2 项（relay / transfer station）与第 5 项（leak extractor）。
 纯标准库实现（`http.server` + `http.client`），任何队友机器 `python relay` 即可启动，
@@ -254,6 +259,8 @@ python scripts/demo_part_c.py               # 假 provider -> relay -> 泄漏表
 
 - 不支持 SSE 流式（BrandAI 固定 `stream: false`，当前够用）；
 - `mitm_addon.py` 是可选 HTTPS 版本，只做过 import 与逻辑复用验证，没有实跑；
-- 真实后端（Ollama + provider 包装）尚未联调，端口和协议按 `INTEGRATION.md` 约定；
 - 中转站不重试、不跟随重定向，上游失败时把错误写进日志并返回 502；
-- 目前没有"无关卡"对照：那属于后端 `routing.py`，需要 A/B 决定是否加实验开关。
+- 主动模式只追加一条配置文本（`active.append_text`，与 A 的 INJ-01 对齐）；`data/attacks/injections.jsonl` 中其余五种注入（包括前置的 INJ-03 和标签洗白 INJ-04）尚不支持；
+- 匹配覆盖原文、大小写折叠、去空白、URL 编码和 base64 形式；不检测近似匹配和改写。
+
+C 分支之后已解决：真实后端（Ollama + provider 包装）已联调，并于 2026-11-22 用真实模型验证；"无关卡"对照已通过 `gate_mode=none` 实现（配置 C1-none 和 C2-none）。

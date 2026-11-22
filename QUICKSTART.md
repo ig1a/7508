@@ -1,13 +1,13 @@
 # Internal Assistant Quick Start
 
-*English version first; the original Chinese text is kept below under "中文原文 (Chinese original)".*
+*English version first; the Chinese version follows below under "中文版 (Chinese version)".*
 
 The current implementation provides internal Q&A of up to four turns, session isolation, reset by
 deletion, routing, and the gate call interface. The default gate is `SecurityForwardingGate`, which
 implements M1 Content Detection and M2 Session Provenance; the default policy is `M1_M2`. After a
-gate DENY no external request is sent and the Internal Fallback is used instead. Steps for the full
-integration and for starting the independent external model are in the
-[B integration guide](docs/B_INTEGRATION.md).
+gate DENY no external request is sent and the Internal Fallback is used instead. The assistant is
+module B; running it together with the other modules (relay, provider, external model, runner and leak
+scoring) is covered in the [integration guide](docs/INTEGRATION_GUIDE.md).
 
 ## Start
 
@@ -122,8 +122,8 @@ non-default gate mode is used or a relay mode is specified, the request must car
 omitted label is treated as UNKNOWN; see the interface document for details.
 
 Only ALLOW sends to the address given by `BRANDAI_RELAY_URL`, by default
-`http://127.0.0.1:11435/api/chat`; the relay and provider are connected on this branch, and the
-integration guide explains how to start them. `external_attempted` only shows whether the send
+`http://127.0.0.1:11435/api/chat`; the relay (module C) and provider (module B) are part of the
+integrated branch, and the integration guide explains how to start them. `external_attempted` only shows whether the send
 function was called; what the external side actually received must be confirmed from the receiver's
 ingress log. `gate_latency_ms` covers only the inspection; `latency_ms` covers the whole processing
 time including queuing, model loading and inference. After an external failure the internal fallback
@@ -133,13 +133,13 @@ See `INTEGRATION.md` for the interface description.
 
 ---
 
-## 中文原文 (Chinese original)
+## 中文版 (Chinese version)
 
 ### 内部助手快速入门
 
 当前实现最多四轮的内部问答、会话隔离、删除重置、路由和关卡调用接口。
 默认关卡已使用 `SecurityForwardingGate`，实现 M1 Content Detection 和 M2 Session Provenance，默认策略为 `M1_M2`。
-Gate DENY 后不发送外部请求，改用 Internal Fallback。完整联调及独立外部模型的启动步骤见 [B 联调指南](docs/B_INTEGRATION.md)。
+Gate DENY 后不发送外部请求，改用 Internal Fallback。助手属于 B 模块；与其他模块（中转站、Provider、外部模型、Runner 和泄漏评分）一起运行的步骤见[集成指南](docs/INTEGRATION_GUIDE.md)。
 
 #### 启动
 
@@ -227,7 +227,7 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 
 可信实验客户端可以提交 `source_label`（PUBLIC / CONFIDENTIAL / UNKNOWN）、`gate_mode`（none / M1 / M2 / M1_M2）及 `relay_mode`（passive / active）。显式提交标签、使用非默认关卡模式或指定 Relay 模式时，必须携带与服务端 `BRANDAI_RUNNER_TOKEN` 匹配的 `X-Experiment-Token`，否则返回 HTTP 401。省略标签时按 UNKNOWN 处理；详见接口文档。
 
-ALLOW 才会向 `BRANDAI_RELAY_URL` 指定的地址发送，默认地址为 `http://127.0.0.1:11435/api/chat`；Relay/Provider 已在本分支接入，启动方法见联调指南。
+ALLOW 才会向 `BRANDAI_RELAY_URL` 指定的地址发送，默认地址为 `http://127.0.0.1:11435/api/chat`；中转站（C 模块）和 Provider（B 模块）已包含在集成分支中，启动方法见集成指南。
 `external_attempted` 只表示是否调用了发送函数；外部真正收到什么必须由接收端 ingress 日志确认。
 `gate_latency_ms` 仅计算检查耗时；`latency_ms` 包含排队、模型加载和推理等整个处理时间。
 外部失败后内部回退仍保留 `external_attempted=true`，因为请求可能已经到达对方。

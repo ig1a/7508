@@ -1,6 +1,11 @@
 # B Integration Validation Record (2026-11-22)
 
-*English version first; the original Chinese text is kept below under "中文原文 (Chinese original)".*
+*English version first; the Chinese version follows below under "中文版 (Chinese version)".*
+
+> Scope of this record: the real-model validation of commit `bf15667` (B's integration of modules A, C,
+> D and E). The integrated branch `feat/a-integration` adds A's runner hardening and leak-scan
+> connection on top; on 2026-11-23 its automated suite passed 129/129 tests, but the real-model smoke
+> test has not been re-run on it. See [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md).
 
 Environment: Windows, Python 3.14.7, Ollama 0.40.16; two independent Ollama endpoints on 11434 and
 11437, both with qwen3:4b-instruct-2507-q4_K_M weights. M1 used the real detect-secrets 1.5.0,
@@ -36,9 +41,11 @@ requires.
 
 ---
 
-## 中文原文 (Chinese original)
+## 中文版 (Chinese version)
 
 ### B 集成验证记录（2026-11-22）
+
+> 本记录范围：提交 `bf15667`（B 对 A、C、D、E 模块的集成）的真实模型验证。集成分支 `feat/a-integration` 在此之上加入了 A 的 Runner 加固和泄漏扫描连接；2026-11-23 其自动测试 129/129 通过，但尚未在该分支上重跑真实模型 smoke 测试。见 [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md)。
 
 环境：Windows、Python 3.14.7、Ollama 0.40.16；两个独立 Ollama 端点 11434/11437，权重均为 qwen3:4b-instruct-2507-q4_K_M。M1 使用实际 detect-secrets 1.5.0、presidio-analyzer 2.2.366、spaCy 3.8.18、en_core_web_sm 3.8.0。
 

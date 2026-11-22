@@ -1,6 +1,6 @@
 # Threat Model — Provider-Side Forwarding Gate (BrandAI)
 
-Status: draft for team review · Source: proposal §1–§4 and the current assistant/routing interface
+Status: implemented by modules A–E on `feat/a-integration` (2026-11-23); open items in §8 · Source: proposal §1–§4 and the integrated implementation
 
 This document fixes what the experiment defends, against whom, under which assumptions, and how each
 threat maps to a configuration and a measurement. Anything not listed here is out of scope; a result
@@ -16,13 +16,13 @@ BrandAI is a fictional local testbed. All secrets are synthetic. No claim is mad
 
 | Component | Implementation | Address | Trust |
 |---|---|---|---|
-| User / scripted client | `scripts/` runner, optional LLM persona | → `127.0.0.1:8000` | Trusted, authorised |
-| BrandAI assistant (API, sessions, router) | `main.py`, `sessions.py`, `routing.py` | `127.0.0.1:8000` | Trusted (TCB) |
-| Forwarding gate (M1 / M2) | `gate.py`, `security_gateway/` | in-process | Trusted (TCB) |
+| User / scripted client | `runner/` (module A), optional LLM persona | → `127.0.0.1:8000` | Trusted, authorised |
+| BrandAI assistant (API, sessions, router) | `main.py`, `sessions.py`, `routing.py` (module B) | `127.0.0.1:8000` | Trusted (TCB) |
+| Forwarding gate (M1 / M2) | `gate.py`, `security_gateway/` (module D) | in-process | Trusted (TCB) |
 | Provenance labeller | trusted runner labels + sticky state in `sessions.py` | in-process | Trusted (TCB) |
 | Internal model | Ollama, `qwen3:4b-instruct-2507-q4_K_M` | `127.0.0.1:11434` | Trusted endpoint; output content is *not* trusted to be secret-free |
-| Relay | mitmproxy, passive or response-rewriting | `127.0.0.1:11435` | **Untrusted — the attacker** |
-| External provider | separate Ollama instance + ingress log | `127.0.0.1:11436` (proposed) | Authorised for PUBLIC content only |
+| Relay | `relay7508/` (module C): standard-library forward proxy, passive or response-rewriting | `127.0.0.1:11435` | **Untrusted — the attacker** |
+| External provider | `provider.py` (module B) with ingress log, upstream to a separate Ollama on `127.0.0.1:11437` | `127.0.0.1:11436` | Authorised for PUBLIC content only |
 
 The internal and external model endpoints must have separate processes, state and logs. They may load
 the same weights, but the external route must never resolve back to `11434`.
@@ -40,7 +40,7 @@ flowchart LR
         L["Provenance labels"]
     end
     X["Relay (attacker)<br/>:11435"]
-    E["External provider<br/>:11436 + ingress log"]
+    E["External provider<br/>:11436 + ingress log<br/>→ Ollama :11437"]
 
     U -- "B1: request + data" --> A
     A --> R
@@ -87,7 +87,7 @@ registry is never read by the assistant, gate or labeller.
 
 | ID | Property | Measured by |
 |---|---|---|
-| P1 | **Egress confidentiality.** No canary from CONFIDENTIAL material appears in the relay log or external ingress log. | Leak extractor (exact, normalised, base64-decoded) + manual semantic check |
+| P1 | **Egress confidentiality.** No canary from CONFIDENTIAL material appears in the relay log or external ingress log. | Leak extractor (exact, case-folded, whitespace-removed, URL-encoded, base64-decoded) + manual semantic check |
 | P2 | **Utility.** Confidential tasks are still completed correctly by the internal model; eligible PUBLIC calls are still forwarded. | Task-completion score vs C0; public-allow rate |
 | P3 | **Fail closed.** A gate exception, timeout or invalid decision transmits nothing. | Routing tests; ingress log empty for `gate_decision=error` |
 | P4 | **Denial completeness.** A denied call sends zero bytes and leaves the internal context intact. | Ingress log; fallback answer uses the confidential fact |
@@ -137,7 +137,7 @@ Using confidential data internally and returning it to the authorised user is **
 | AA2 | Gate, labeller and assistant code are intact and run in a single process. | Gate bypass; out of scope |
 | AA3 | All external calls go through `routing.run_assistant`; there are no other egress paths. | Must be verified during integration (§8) |
 | AA4 | Labels are correct, except in the planned mislabelling study. | Reported separately as classification dependence |
-| AA5 | No retries, no redirect following, no request rebuild after inspection. | Already enforced and tested in branch B |
+| AA5 | No retries, no redirect following, no request rebuild after inspection. | Enforced in `routing.py` and the relay, and covered by tests |
 | AA6 | Side channels (timing, payload length, request counts) are not considered a leak. | Listed as a limitation |
 | AA7 | Each trial starts from clean state in every component (assistant, labels, relay, external model, logs). | Cross-trial contamination; the runner must reset everything |
 
@@ -165,7 +165,7 @@ everything the user has disclosed so far. An active relay therefore only adds le
 *new* is disclosed **because of** the rewritten response. With fixed scripted turns, nothing reacts to the
 injection, so C2 would equal C1 and the C2 results would be uninformative.
 
-Proposed rule (to confirm with Duan and Li):
+Rule implemented in the runner (team confirmation pending, §9):
 
 1. Each C2-eligible task defines a **compliance turn**: a scripted user message that supplies an
    *additional* confidential record (its own canaries, not present earlier in the task).
@@ -187,7 +187,8 @@ Implemented and enforced by `taskset/` — see [task_format.md](task_format.md).
 - **Do not use a shared prefix such as `CANARY-`.** M1 could trivially detect it, and the result would
   overstate M1.
 - Every canary is unique across the whole corpus, so that a leak can be attributed to a single task and asset.
-- The extractor matches exact, normalised (case, whitespace and separators removed) and base64-decoded forms.
+- The extractor (`relay7508/canary.py`) matches exact, case-folded, whitespace-removed, URL-encoded and
+  base64-decoded forms. A near-match pass is not implemented (see [task_format.md](task_format.md)).
 - Personal records and document excerpts carry several canaries (e.g. an ID number and a distinctive
   phrase), so that partial leaks are counted.
 
@@ -236,21 +237,32 @@ the deployed combined policy; these are reported separately and do not change th
 
 ## 8. Current integration gaps
 
-| Gap | Needed for | Proposed owner |
+Implemented on `feat/a-integration`: gate modes none / M1 / M2 / M1_M2 selected per request (D, B);
+trusted per-turn labels with sticky session state and verified assistant reset (A, B, D); a validated
+trial ID carried from the runner through the assistant, gate audit, relay and provider ingress logs
+(A, B, C, D); the relay on `:11435`, the provider ingress log on `:11436` and a separate external Ollama
+on `:11437` (B, C); a persistent metadata-only gate audit (D); the runner checking the assistant's echo
+of the requested configuration (A, B); and leak scoring of every C1/C2 batch with the extractor through
+`runner/leakscan.py` (A, C).
+
+| Gap | Needed for | Owner |
 |---|---|---|
-| Gate modes and Runner mapping are implemented, but full deployed-mode attestation still needs all component logs | C1/C2 and M1/M2 attribution | Integration + assistant/routing |
-| Trusted label input, sticky session state and verified assistant reset are implemented; Relay/Provider reset and C2 laundering still need end-to-end validation | M2, P5, AA7 | Integration + Sun |
-| Validated trial ID reaches assistant, gate audit and outbound request, but Relay/Provider propagation is not implemented | Leak attribution | Integration + Duan |
-| No relay at `:11435`; no external Ollama or ingress log | B3/B4 sensors | Duan |
-| Persistent metadata-only gate audit exists; leak-extractor verification over it remains | P6, T10 | Sun + Duan |
-| Runner sends gate/relay modes, but deployed Gateway/Relay/Provider behavior is not yet attested from all component logs | Valid C1/C2 and M1/M2 attribution | Evaluation runner + integration |
+| The relay appends one fixed text (INJ-01); the prepended INJ-03 and label-laundering INJ-04 are not exercised | T4, T5, P5 under C2 | C + A |
+| The main matrix (4,200 trials) has not been run; each trial's executed mode must be attested from gate audit, relay and provider logs | All headline results | A + all |
+| No near-match pass in the extractor; semantic leakage needs manual review | P1, T7 | C + A |
+| The extractor has not yet been run over the gate audit log | P6, T10 | D + C |
+| Relay and provider state is isolated by trial ID rather than reset; check for cross-trial contamination in the full run | AA7 | B + C |
+| The real-model smoke test has not been re-run on `feat/a-integration` (last run on `bf15667`) | Regression evidence | B |
+| CI runs only module C's tests | Regression evidence | All |
 | 2,000-character message and 12,000-byte session limits | Excerpt and base64 tasks must fit | Task-set design |
 | System prompt in Chinese | Task language must be consistent | Team decision |
+| Mislabelling-study variant not yet built | AA4 | A |
 | AA3 unverified for future features (tools, retries) | P1 | Integration review |
 
 ## 9. Open questions for the team
 
 1. Approve the scripted compliance-turn rule now implemented in the runner (§5.1), or replace it with an LLM persona for T4.
 2. Task language: Chinese, to match the current system prompt, or switch the prompt to English?
-3. External endpoint port and log format (proposed `:11436`, JSON lines with a trial ID).
-4. Does the external provider count as a separate leak recipient in the headline metric, or only the relay?
+3. ~~External endpoint port and log format.~~ Resolved: provider ingress on `:11436` as JSON Lines keyed by trial ID; external Ollama on `:11437`.
+4. Does the external provider count as a separate leak recipient in the headline metric, or only the relay? (The extractor reports both separately.)
+5. Injection set for C2: extend the relay to all six injections in `data/attacks/injections.jsonl`, or narrow T4/T5 to INJ-01 and report P5 from unit tests only?

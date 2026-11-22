@@ -1,80 +1,69 @@
-# DASE7508 — BrandAI B 模块
+# DASE7508 — B 模块与全链路联调
 
-本分支实现小组项目中 B 成员负责的助手、会话管理、路由和模型后端。
-当前可演示：本地模型问答 → 多轮记忆 → 提议外部调用 → 占位关卡拒绝 → 内部回退。
+本分支接入队友的 A（任务集/Runner）、C（中转站/泄漏提取）、D（M1/M2）及 E（离线评分）代码，保留各自提交历史。B 本次补齐运行器到助手的实验参数、独立外部 Provider，以及跨模块联调；未直接修改远程 main。
 
-**关卡目前拒绝全部外发，尚未实现 M1/M2。完整中转站和独立外部模型仍需队友接入。**
-本分支的结果是组件验证，不能作为防泄露实验结论。
+```text
+Runner → B Assistant/API → D Gateway → C Relay → Provider → External Ollama
+                 └──── deny/error → Internal Ollama
+```
 
-## 环境与首次安装
+两个 Ollama 使用独立进程/端口和相同模型权重，会话及接收日志分开。这是本地模拟边界，不是独立云服务。
 
-已验证环境：Windows、Python 3.14.7、Ollama 0.40.16、RTX 4060 Laptop 8 GB、约 16 GB 内存。
-其他 Python/操作系统版本尚未验证。依赖版本固定在 `requirements.txt`。
+## 本次实现
 
-在仓库根目录的 PowerShell 中运行：
+- Runner 每轮发送来源标签、关卡策略、中转模式及认证头，检查服务端回显，避免仅凭配置名称声称已执行策略。
+- B 保留完整历史、隔离会话；每次外发重新检查，拒绝/异常时内部回退。检查后的正文和应用请求头保持一致；不自动重试或跟随重定向。
+- Relay 按请求切换 C1/C2，按 Trial ID 隔离注入计数；修复 upstream 已包含 /api/chat 时路径重复的问题。
+- provider.py 提供独立接收端，在模型调用前记录 ingress；上游推理失败也保留已接收证据，拒绝接回内部模型端口。
+- scripts/integration_smoke.py 用固定虚构资料跑 10 个真实模型场景，核对两端日志、审计及泄漏提取，自动清理临时 HTTP 服务和会话。
+
+## 安装与运行
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-ollama pull qwen3:4b-instruct-2507-q4_K_M
+.\.venv\Scripts\python.exe -m spacy download en_core_web_sm
+.\.venv\Scripts\python.exe -m taskset.build
 ```
 
-也可用 `scripts/setup.ps1` 创建虚拟环境并安装 Python 依赖。
-Ollama 从 https://ollama.com/download/windows 安装，模型约 2.5 GB。
-本机安装路径为 `D:\Ollama`；队友无需使用相同路径，但必须启动本机 Ollama 服务。
-如命令未找到，可新开终端或使用实际安装路径调用 `ollama.exe`。
+本机已验证 Python 3.14.7、Ollama 0.40.16、qwen3:4b-instruct-2507-q4_K_M。详细步骤见 [联调指南](docs/B_INTEGRATION.md)，基础问答见 [QUICKSTART.md](QUICKSTART.md)，协议见 [INTEGRATION.md](INTEGRATION.md)。
 
-## 启动与一键演示
-
-终端一：
+保持内部 Ollama 监听 11434，另开终端启动外部模型：
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+$env:OLLAMA_HOST = '127.0.0.1:11437'
+& 'D:\Ollama\ollama.exe' serve
 ```
 
-保持终端一运行，在终端二执行：
+在项目目录的新终端执行：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/demo.py
+.\.venv\Scripts\python.exe scripts/integration_smoke.py
 ```
 
-已有后端占用 8000 端口时不必重复启动。开发时可加 `--reload`，但修改代码会清空内存会话。
-对应 PowerShell 脚本为 `scripts/start.ps1` 和 `scripts/demo.ps1`。
-若电脑的脚本执行策略阻止 `.ps1`，直接使用上述 Python 命令，无需修改系统策略。
+临时 Assistant/Relay/Provider 自动分配本机端口；报告写入新的 reports/integration-时间/。脚本自行生成临时认证令牌，不打印、不转发到外部，也不写入报告。
 
-演示依次检查内部路径、跨轮记忆、会话隔离、关卡拒绝后的内部回退和会话删除，
-只使用固定虚构资料，最后清理自身创建的会话。报告写入 `reports/demo.json`，不纳入 Git。
-成功时显示五条 `PASS` 和 `Result: passed`。首次模型加载可能明显慢于后续问答。
-
-手动操作页面：http://127.0.0.1:8000/docs 。示例见 [QUICKSTART.md](QUICKSTART.md)。
-
-## 自动检查（不需要下载模型）
+## 验证范围
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_backend test_routing
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m unittest discover -v
 ```
 
-16 项检查使用模拟模型和本机临时 HTTP 接收器，覆盖会话隔离、上下文保留、拒绝不发送、
-获准请求字节一致、关卡异常、后续轮次重新检查、重定向阻止及外部失败回退。
-运行测试需要允许访问本机临时端口，不访问第三方模型。
+真实 M1 插件测试要求英文模型和生成任务集；缺失时跳过，不算通过。自动测试中的模型推理使用替身；10 场景 smoke 才调用两个真实本地模型。
 
-## 文件分工
+2026-11-22 本次真实模型 smoke：10/10 场景通过，包括公开放行、无关卡对照、M1/M2/组合拦截、机密历史后的公开追问、C2 注入及下一轮重新检查。这不替代完整实验矩阵。
 
-| 文件 | 作用 |
+evaluation/results/ 为 D 分支继承的历史聚合结果，与本次 smoke 分开；本次未重跑其全量实验，不把历史数字当作本次结果。
+
+## 分工与资料
+
+| 模块 | 入口 |
 |---|---|
-| `main.py` | API 输入校验、会话处理和响应字段 |
-| `sessions.py` | 内存历史、四轮限制、会话删除 |
-| `model_backend.py` | 构建 Ollama 请求，发送和解析结果 |
-| `routing.py` | 内部/外部候选路由、检查后发送、内部回退 |
-| `gate.py` | 关卡接口和默认拒绝占位实现 |
-| `test_backend.py`、`test_routing.py` | 组件和本地传输检查 |
-| `scripts/demo.py` | 调用真实模型的一键演示 |
+| A 威胁模型/任务集/Runner | docs/threat_model.md、docs/task_format.md、taskset/、runner/ |
+| B 助手/路由/后端/Provider | main.py、sessions.py、routing.py、model_backend.py、provider.py |
+| C 中转站/泄漏提取 | relay7508/、docs/PART_C.md |
+| D Security Gateway | security_gateway/、gate.py |
+| E 离线评分 | evaluation/compare_acceptance.py |
 
-队友接口及尚未完成事项见 [INTEGRATION.md](INTEGRATION.md)。
-内存会话要求单进程，不能添加多个 workers；服务未实现用户鉴权，仅绑定本机使用。
-这是开发原型，尚不具备完整实验的可信来源标签、持续审计与所有对照配置。
-
-## AI 使用记录
-
-本分支由 AI 辅助实现和调试。负责成员需理解代码、复核结果，并按课程要求在最终提交中如实披露。
-检查通过只代表所覆盖场景；完整实验结果由后续集成运行产生。
+仅供本机单进程实验，不增加 workers。完整日志只使用虚构资料，保存在 Git 忽略的 reports/、logs/。代码及本次联调由 AI 辅助完成，负责成员应理解实现、复核证据并按课程要求披露。

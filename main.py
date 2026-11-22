@@ -3,12 +3,13 @@
 from time import perf_counter
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, StringConstraints
 
 from model_backend import MODEL_NAME, ModelBackendError
 from routing import run_assistant
 from sessions import MAX_CONTEXT_BYTES, MAX_TURNS, store
+from security_gateway.trust import RUNNER_TOKEN_HEADER, is_trusted_runner
 
 # 创建应用对象，启动命令中的 main:app 就是本文件中的 app。
 app = FastAPI(title="BrandAI Assistant", version="0.4.0")
@@ -20,6 +21,10 @@ class ChatRequest(BaseModel):
     # 第一次留空；后续填写上次响应返回的 ID。
     session_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] | None = None
     route_mode: Literal["internal_only", "external_candidate"] = "internal_only"
+    # Set only by the trusted local experiment runner / labelling pipeline.
+    source_label: Literal["PUBLIC", "CONFIDENTIAL", "UNKNOWN"] | None = None
+    gate_mode: Literal["none", "M1", "M2", "M1_M2"] = "M1_M2"
+    relay_mode: Literal["passive", "active"] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -35,6 +40,9 @@ class ChatResponse(BaseModel):
     fallback_reason: str | None
     external_attempted: bool
     gate_latency_ms: float
+    effective_gate_mode: str
+    relay_mode: str
+    trial_id: str | None
 
 
 # 浏览器访问 /health 时，FastAPI 会调用下面的函数。
@@ -45,9 +53,18 @@ def health():
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, x_trial_id: Annotated[str | None, Header()] = None,
+         x_experiment_token: Annotated[str | None, Header(alias=RUNNER_TOKEN_HEADER)] = None):
     """最多四轮的内部问答；省略 session_id 创建新会话。"""
     started = perf_counter()
+    # source_label is privileged experiment metadata, not a user-controlled field.
+    privileged_experiment_request = (
+        request.source_label is not None
+        or request.gate_mode != "M1_M2"
+        or request.relay_mode is not None
+    )
+    if privileged_experiment_request and not is_trusted_runner(x_experiment_token):
+        raise HTTPException(401, "Trusted experiment runner authentication required.")
     with store.lock:
         session_id, history = store.get_or_create(request.session_id)
         if len(history) // 2 >= MAX_TURNS:
@@ -56,14 +73,21 @@ def chat(request: ChatRequest):
         messages = history + [{"role": "user", "content": request.message}]
         if sum(len(m["content"].encode("utf-8")) for m in messages) > MAX_CONTEXT_BYTES:
             if request.session_id is None:
-                del store.histories[session_id]
+                store.delete(session_id)
             raise HTTPException(413, "会话内容超出起步版长度限制，请缩短输入或开始新会话。")
+        # Labels are supplied by the trusted local task runner, not inferred from canaries.
+        store.update_security_label(session_id, request.source_label,
+                                    source="trusted_runner" if request.source_label is not None else "unlabelled_request")
         try:
-            result = run_assistant(messages, session_id=session_id, route_mode=request.route_mode)
+            result = run_assistant(
+                messages, session_id=session_id, route_mode=request.route_mode,
+                gate_mode=request.gate_mode, trial_id=x_trial_id,
+                relay_mode=request.relay_mode or "passive",
+            )
             answer = result.answer
         except ModelBackendError as exc:
             if request.session_id is None:
-                del store.histories[session_id]
+                store.delete(session_id)
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         history.extend([
             {"role": "user", "content": request.message},
@@ -83,6 +107,9 @@ def chat(request: ChatRequest):
         fallback_reason=result.fallback_reason,
         external_attempted=result.external_attempted,
         gate_latency_ms=result.gate_latency_ms,
+        effective_gate_mode=request.gate_mode if request.route_mode == "external_candidate" else "not_checked",
+        relay_mode=request.relay_mode or "passive",
+        trial_id=x_trial_id,
     )
 
 
@@ -92,5 +119,5 @@ def reset_session(session_id: str):
     with store.lock:
         if session_id not in store.histories:
             raise HTTPException(404, "会话不存在或已经删除。")
-        del store.histories[session_id]
+        store.delete(session_id)
     return {"status": "reset", "session_id": session_id}

@@ -32,8 +32,9 @@ def make_task(**overrides):
 class FakeAssistant:
     """Mimics the /chat response fields of main.py; `answer_for` decides each answer."""
 
-    def __init__(self, answer_for, fail_on=None):
-        self.messages, self.deleted, self.trial_ids = [], [], []
+    def __init__(self, answer_for, fail_on=None, experiment_token=None, delete_status=200, echo_overrides=None):
+        self.messages, self.deleted, self.trial_ids, self.experiment_tokens = [], [], [], []
+        self.experiment_token = experiment_token
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -52,6 +53,7 @@ class FakeAssistant:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 outer.messages.append(body)
                 outer.trial_ids.append(self.headers.get("X-Trial-Id"))
+                outer.experiment_tokens.append(self.headers.get("X-Experiment-Token"))
                 if fail_on and fail_on in body["message"]:
                     return self.reply(413, {"detail": "too long"})
                 self.reply(200, {"answer": answer_for(body), "model": "fake", "route": "internal",
@@ -59,12 +61,16 @@ class FakeAssistant:
                                  "turn_count": len(outer.messages), "requested_route": body["route_mode"],
                                  "gate_decision": "not_checked", "fallback": False, "fallback_reason": None,
                                  "external_attempted": False, "gate_latency_ms": 0.0,
-                                 "effective_gate_mode": body["gate_mode"] if body["route_mode"] == "external_candidate" else "not_checked",
-                                 "relay_mode": body["relay_mode"], "trial_id": self.headers.get("X-Trial-Id")})
+                                 "effective_gate_mode": body.get("gate_mode", "M1_M2") if body["route_mode"] == "external_candidate" else "not_checked",
+                                 "relay_mode": body.get("relay_mode") or "passive",
+                                 "trial_id": self.headers.get("X-Trial-Id"), **(echo_overrides or {})})
 
             def do_DELETE(self):
                 outer.deleted.append(self.path)
-                self.reply(200, {"status": "reset"})
+                if delete_status == 200:
+                    self.reply(200, {"status": "reset"})
+                else:
+                    self.reply(delete_status, {"detail": "reset failed"})
 
             def log_message(self, *args):
                 pass
@@ -74,7 +80,11 @@ class FakeAssistant:
 
     def __enter__(self):
         self.thread.start()
-        return Client(f"http://127.0.0.1:{self.server.server_port}", timeout=10)
+        return Client(
+            f"http://127.0.0.1:{self.server.server_port}",
+            timeout=10,
+            token=self.experiment_token or "",
+        )
 
     def __exit__(self, *exc):
         self.server.shutdown()
@@ -116,8 +126,57 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(fake.messages[1]["session_id"], "s1")
         self.assertEqual(fake.deleted, ["/sessions/s1"])
         self.assertEqual(set(fake.trial_ids), {"C0:C-test:r1"})
+        self.assertEqual(set(fake.experiment_tokens), {None})
         self.assertFalse(record["compliance_sent"])
-        self.assertEqual([m["source_label"] for m in fake.messages], ["CONFIDENTIAL", "PUBLIC"])
+        self.assertTrue(all("source_label" not in m and "gate_mode" not in m for m in fake.messages))
+        self.assertEqual(record["reset"], {"status": "ok", "http_status": 200})
+
+    def test_external_configs_send_gateway_contract_and_token(self):
+        for config, expected_gate, expected_relay in (
+            ("C1-none", "none", "passive"),
+            ("C1-M1", "M1", "passive"),
+            ("C1-M2", "M2", "passive"),
+            ("C1-M1_M2", "M1_M2", "passive"),
+            ("C2-none", "none", "active"),
+            ("C2-M1", "M1", "active"),
+            ("C2-M2", "M2", "active"),
+            ("C2-M1_M2", "M1_M2", "active"),
+        ):
+            with self.subTest(config=config):
+                fake = FakeAssistant(lambda body: "Clean answer", experiment_token="test-runner-token")
+                with fake as client:
+                    record = run_trial(client, make_task(compliance=None), config, 1, INJECTIONS)
+                self.assertEqual(
+                    [message["source_label"] for message in fake.messages],
+                    ["CONFIDENTIAL", "PUBLIC"],
+                )
+                self.assertEqual({message["gate_mode"] for message in fake.messages}, {expected_gate})
+                self.assertEqual({message["relay_mode"] for message in fake.messages}, {expected_relay})
+                self.assertEqual(set(fake.experiment_tokens), {"test-runner-token"})
+                self.assertEqual(record["requested_config"]["gate_mode"], expected_gate)
+                self.assertEqual(record["requested_config"]["relay_mode"], expected_relay)
+
+    def test_invalid_task_id_cannot_become_trial_header(self):
+        fake = FakeAssistant(lambda body: "Clean answer")
+        with fake as client, self.assertRaisesRegex(ValueError, "Invalid generated trial ID"):
+            run_trial(
+                client,
+                make_task(task_id="secret=REAL_SECRET_VALUE"),
+                "C0",
+                1,
+                INJECTIONS,
+            )
+        self.assertEqual(fake.messages, [])
+
+    def test_unacknowledged_configuration_fails_trial(self):
+        fake = FakeAssistant(lambda body: "Clean answer", experiment_token="test-runner-token",
+                             echo_overrides={"effective_gate_mode": "none"})
+        with fake as client:
+            record = run_trial(client, make_task(compliance=None), "C1-M2", 1, INJECTIONS)
+        self.assertEqual(record["status"], "error")
+        self.assertEqual(len(fake.messages), 1)
+        self.assertIn("did not acknowledge", record["turns"][0]["error"])
+        self.assertEqual(fake.deleted, ["/sessions/s1"])
 
     def test_compliance_only_in_active_relay_after_injection_seen(self):
         injected = lambda body: "Answer. Please paste the whole thing."
@@ -145,6 +204,17 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(fake.deleted, ["/sessions/s1"])
         self.assertIn("1 errors", summarise([record]))
 
+    def test_failed_reset_invalidates_trial(self):
+        fake = FakeAssistant(lambda body: "The key is KEY-123.", delete_status=500)
+        with fake as client:
+            record = run_trial(client, make_task(), "C0", 1, INJECTIONS)
+        self.assertEqual(record["status"], "error")
+        self.assertIsNone(record["task_completed"])
+        self.assertEqual(
+            record["reset"],
+            {"status": "error", "http_status": 500, "detail": "reset failed"},
+        )
+
     def test_short_facts_match_whole_words_only(self):
         self.assertFalse(fact_found("dev", "These are development credentials"))
         self.assertTrue(fact_found("dev", "the dev environment"))
@@ -167,6 +237,21 @@ class RunnerTests(unittest.TestCase):
     def test_main_returns_130_when_interrupted(self):
         code = self.run_main_with_failure(KeyboardInterrupt())
         self.assertEqual(code, 130)
+
+    def test_non_c0_requires_runner_token(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tasks = root / "tasks.jsonl"
+            tasks.write_text(json.dumps(make_task()) + "\n", encoding="utf-8")
+            with (
+                patch.object(runner_module, "TASKS", tasks),
+                patch.dict("os.environ", {}, clear=True),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()) as stderr,
+            ):
+                code = runner_module.main(["--config", "C1-M1", "--out", str(root / "results.jsonl")])
+        self.assertEqual(code, 1)
+        self.assertIn("BRANDAI_RUNNER_TOKEN", stderr.getvalue())
 
 
 if __name__ == "__main__":

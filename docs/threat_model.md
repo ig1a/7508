@@ -18,8 +18,8 @@ BrandAI is a fictional local testbed. All secrets are synthetic. No claim is mad
 |---|---|---|---|
 | User / scripted client | `scripts/` runner, optional LLM persona | → `127.0.0.1:8000` | Trusted, authorised |
 | BrandAI assistant (API, sessions, router) | `main.py`, `sessions.py`, `routing.py` | `127.0.0.1:8000` | Trusted (TCB) |
-| Forwarding gate (M1 / M2) | `gate.py` (placeholder today) | in-process | Trusted (TCB) |
-| Provenance labeller | user classification + corpus metadata (not yet built) | in-process | Trusted (TCB) |
+| Forwarding gate (M1 / M2) | `gate.py`, `security_gateway/` | in-process | Trusted (TCB) |
+| Provenance labeller | trusted runner labels + sticky state in `sessions.py` | in-process | Trusted (TCB) |
 | Internal model | Ollama, `qwen3:4b-instruct-2507-q4_K_M` | `127.0.0.1:11434` | Trusted endpoint; output content is *not* trusted to be secret-free |
 | Relay | mitmproxy, passive or response-rewriting | `127.0.0.1:11435` | **Untrusted — the attacker** |
 | External provider | separate Ollama instance + ingress log | `127.0.0.1:11436` (proposed) | Authorised for PUBLIC content only |
@@ -228,18 +228,22 @@ Implemented and enforced by `taskset/` — see [task_format.md](task_format.md).
 | C2-M1 | active | M1 | Scanning under injection |
 | C2-M2 | active | M2 | Labels under injection, laundering |
 
+The seven configurations above are the preregistered main matrix (4,200 trials at five runs per task).
+The runner also exposes `C1-M1_M2` and `C2-M1_M2` for reproducible supplemental acceptance checks of
+the deployed combined policy; these are reported separately and do not change the main matrix.
+
 ---
 
 ## 8. Current integration gaps
 
 | Gap | Needed for | Proposed owner |
 |---|---|---|
-| No `none` gate; the gate is hard-coded to `PlaceholderGate` | C1-none, C2-none, M1/M2 selection | Integration + assistant/routing |
-| No label input in `ChatRequest`; no session label state; reset does not clear labels | M2, P5, AA7 | Song + Sun |
-| No trial ID linking assistant, relay and ingress logs | Leak attribution | Integration + Duan |
+| Gate modes and Runner mapping are implemented, but full deployed-mode attestation still needs all component logs | C1/C2 and M1/M2 attribution | Integration + assistant/routing |
+| Trusted label input, sticky session state and verified assistant reset are implemented; Relay/Provider reset and C2 laundering still need end-to-end validation | M2, P5, AA7 | Integration + Sun |
+| Validated trial ID reaches assistant, gate audit and outbound request, but Relay/Provider propagation is not implemented | Leak attribution | Integration + Duan |
 | No relay at `:11435`; no external Ollama or ingress log | B3/B4 sensors | Duan |
-| No persistent gate audit log | P6, T10 | Sun |
-| Runner configuration names are recorded but not attested against the deployed gate/relay | Valid C1/C2 and M1/M2 attribution | Evaluation runner + integration |
+| Persistent metadata-only gate audit exists; leak-extractor verification over it remains | P6, T10 | Sun + Duan |
+| Runner sends gate/relay modes, but deployed Gateway/Relay/Provider behavior is not yet attested from all component logs | Valid C1/C2 and M1/M2 attribution | Evaluation runner + integration |
 | 2,000-character message and 12,000-byte session limits | Excerpt and base64 tasks must fit | Task-set design |
 | System prompt in Chinese | Task language must be consistent | Team decision |
 | AA3 unverified for future features (tools, retries) | P1 | Integration review |

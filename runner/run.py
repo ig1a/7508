@@ -5,8 +5,9 @@ Usage:
   python -m runner.run --config C0 --tasks "C-cred-*" --limit 5
   python -m runner.run --summary reports/runs/<file>.jsonl  # re-print a summary
 
-The assistant (and for C1/C2 the relay, gate and external model) must already be running and set
-up with BRANDAI_RUNNER_TOKEN; the runner sends labels and modes on every turn.
+The assistant (and for C1/C2 the relay, gate and external model) must already be running.
+For C1/C2, the assistant and runner share BRANDAI_RUNNER_TOKEN; the runner sends the trusted
+per-turn source label and requested gate/relay modes, and checks that the assistant echoes them.
 Output goes to reports/runs/ (git-ignored) because answers contain the synthetic secrets.
 """
 
@@ -27,6 +28,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
+from security_gateway.trial import is_valid_trial_id
+
 ROOT = Path(__file__).resolve().parents[1]
 TASKS = ROOT / "data" / "generated" / "tasks.jsonl"
 INJECTIONS = ROOT / "data" / "attacks" / "injections.jsonl"
@@ -38,10 +41,10 @@ CONFIGS = {
     "C1-none": {"route_mode": "external_candidate", "relay": "passive", "gate": "none"},
     "C1-M1": {"route_mode": "external_candidate", "relay": "passive", "gate": "M1"},
     "C1-M2": {"route_mode": "external_candidate", "relay": "passive", "gate": "M2"},
+    "C1-M1_M2": {"route_mode": "external_candidate", "relay": "passive", "gate": "M1_M2"},
     "C2-none": {"route_mode": "external_candidate", "relay": "active", "gate": "none"},
     "C2-M1": {"route_mode": "external_candidate", "relay": "active", "gate": "M1"},
     "C2-M2": {"route_mode": "external_candidate", "relay": "active", "gate": "M2"},
-    "C1-M1_M2": {"route_mode": "external_candidate", "relay": "passive", "gate": "M1_M2"},
     "C2-M1_M2": {"route_mode": "external_candidate", "relay": "active", "gate": "M1_M2"},
 }
 
@@ -101,21 +104,31 @@ def fact_found(fact: str, answer: str) -> bool:
 def run_trial(client: Client, task: dict, config: str, run: int, injections: list[dict]) -> dict:
     cfg = CONFIGS[config]
     trial_id = f"{config}:{task['task_id']}:r{run}"
+    if not is_valid_trial_id(trial_id):
+        raise ValueError(f"Invalid generated trial ID: {trial_id!r}")
     started = time.perf_counter()
     record = {
         "trial_id": trial_id, "config": config, "run": run,
+        "requested_config": {
+            "route_mode": cfg["route_mode"], "gate_mode": cfg["gate"], "relay_mode": cfg["relay"],
+        },
         "started_utc": datetime.now(timezone.utc).isoformat(),
         **{k: task[k] for k in ("task_id", "label", "asset", "presentation", "encoding", "template", "flow",
                                 "hard_negative", "utility_scored")},
         "status": "ok", "turns": [], "injections_seen": [], "compliance_sent": False,
+        "reset": {"status": "not_required"},
     }
     session_id = None
 
     def send(turn: dict, index: int) -> bool:
         nonlocal session_id
-        body = {"message": turn["content"], "route_mode": cfg["route_mode"],
-                "source_label": turn["label"], "gate_mode": cfg["gate"] or "M1_M2",
-                "relay_mode": cfg["relay"] or "passive"}
+        body = {"message": turn["content"], "route_mode": cfg["route_mode"]}
+        if config != "C0":
+            body.update({
+                "source_label": turn["label"],
+                "gate_mode": cfg["gate"],
+                "relay_mode": cfg["relay"],
+            })
         if session_id:
             body["session_id"] = session_id
         sent = time.perf_counter()
@@ -126,7 +139,7 @@ def run_trial(client: Client, task: dict, config: str, run: int, injections: lis
             session_id = payload["session_id"]
             expected_mode = cfg["gate"] if cfg["gate"] else "not_checked"
             if (payload.get("effective_gate_mode") != expected_mode
-                    or payload.get("relay_mode") != body["relay_mode"]
+                    or payload.get("relay_mode") != (cfg["relay"] or "passive")
                     or payload.get("trial_id") != trial_id):
                 entry["error"] = "Assistant did not acknowledge requested experiment configuration"
                 record["turns"].append(entry)
@@ -149,7 +162,16 @@ def run_trial(client: Client, task: dict, config: str, run: int, injections: lis
             record["status"] = "error"
     finally:
         if session_id:
-            client.call("DELETE", f"/sessions/{session_id}", trial_id=trial_id)
+            reset_status, reset_payload = client.call("DELETE", f"/sessions/{session_id}", trial_id=trial_id)
+            if reset_status == 200 and reset_payload.get("status") == "reset":
+                record["reset"] = {"status": "ok", "http_status": reset_status}
+            else:
+                record["reset"] = {
+                    "status": "error",
+                    "http_status": reset_status,
+                    "detail": reset_payload.get("detail", "invalid reset response"),
+                }
+                record["status"] = "error"
 
     data_turns = [t for t in record["turns"] if t["kind"] == "data" and "answer" in t]
     answer = data_turns[-1]["answer"] if data_turns else ""
@@ -242,7 +264,12 @@ def main(argv: list[str] | None = None) -> int:
         print("No tasks selected.", file=sys.stderr)
         return 1
 
-    client = Client(args.base_url, args.timeout)
+    experiment_token = os.environ.get("BRANDAI_RUNNER_TOKEN")
+    if args.config != "C0" and not experiment_token:
+        print("BRANDAI_RUNNER_TOKEN must be set for C1/C2 experiments.", file=sys.stderr)
+        return 1
+
+    client = Client(args.base_url, args.timeout, token=experiment_token)
     try:
         status, health = client.call("GET", "/health")
     except AssistantUnavailable as exc:
@@ -271,6 +298,10 @@ def main(argv: list[str] | None = None) -> int:
                     exit_code = 1
                 print(f"[{n}/{len(trials)}] {record['trial_id']} {record['status']} "
                       f"completed={record['task_completed']} {record['wall_ms'] / 1000:.1f}s", flush=True)
+                if record["reset"]["status"] == "error":
+                    print(f"Trial reset failed: {record['reset']}", file=sys.stderr)
+                    exit_code = 1
+                    break
     except AssistantUnavailable as exc:
         print(exc, file=sys.stderr)
         exit_code = 1

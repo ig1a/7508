@@ -159,9 +159,86 @@ class GateIntegrationTests(unittest.TestCase):
             "main.run_assistant", return_value=RoutingResult("ok", "internal", "deny", "gate_denied", False, 0.0)
         ) as route:
             chat(ChatRequest(message="hello", source_label="CONFIDENTIAL", gate_mode="M2"),
-                 x_trial_id="test-trial", x_experiment_token="unit-test-only")
+                 x_trial_id="C1-M2:C-test:r1", x_experiment_token="unit-test-only")
             self.assertEqual(route.call_args.kwargs["gate_mode"], "M2")
-            self.assertEqual(route.call_args.kwargs["trial_id"], "test-trial")
+            self.assertEqual(route.call_args.kwargs["trial_id"], "C1-M2:C-test:r1")
+
+    def test_invalid_trial_id_is_rejected_before_routing(self):
+        from fastapi import HTTPException
+        from main import ChatRequest, chat
+        with self.assertRaises(HTTPException) as ctx:
+            chat(ChatRequest(message="hello"), x_trial_id="secret=REAL_SECRET_VALUE")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_gate_rejects_inconsistent_trial_header_without_logging_value(self):
+        from gate import OutboundRequest
+        from security_gateway.engine import SecurityForwardingGate
+        from sessions import store
+
+        class CleanScanner:
+            def scan(self, payload, *, additional_texts=()):
+                return DetectionReport()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audit_path = Path(tmp) / "audit.jsonl"
+            gate = SecurityForwardingGate(
+                scanner=CleanScanner(), audit=SecurityAuditLogger(audit_path)
+            )
+            with store.lock:
+                sid, _ = store.get_or_create(None)
+                store.update_security_label(sid, "PUBLIC")
+                try:
+                    request = OutboundRequest(
+                        url="http://127.0.0.1:11435/api/chat",
+                        body=b'{"messages":[]}',
+                        headers=(("X-Trial-Id", "secret=REAL_SECRET_VALUE"),),
+                        gate_mode="M1",
+                        trial_id="secret=REAL_SECRET_VALUE",
+                    )
+                    decision = gate.inspect(request, session_id=sid)
+                finally:
+                    store.delete(sid)
+            self.assertFalse(decision.allowed)
+            self.assertEqual(decision.reason_code, "INVALID_TRIAL_ID")
+            self.assertNotIn("REAL_SECRET_VALUE", audit_path.read_text(encoding="utf-8"))
+
+    def test_detector_timeout_fails_closed_and_disables_future_scans(self):
+        from threading import Event
+        from gate import OutboundRequest
+        from security_gateway.engine import SecurityForwardingGate
+        from sessions import store
+
+        release = Event()
+
+        class BlockingScanner:
+            def scan(self, payload, *, additional_texts=()):
+                release.wait(1)
+                return DetectionReport()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = SecurityForwardingGate(
+                scanner=BlockingScanner(),
+                audit=SecurityAuditLogger(Path(tmp) / "audit.jsonl"),
+                inspection_timeout_s=0.01,
+            )
+            with store.lock:
+                sid, _ = store.get_or_create(None)
+                store.update_security_label(sid, "PUBLIC")
+                try:
+                    request = OutboundRequest(
+                        url="http://127.0.0.1:11435/api/chat",
+                        body=b'{"messages":[]}',
+                        gate_mode="M1",
+                    )
+                    first = gate.inspect(request, session_id=sid)
+                    second = gate.inspect(request, session_id=sid)
+                finally:
+                    release.set()
+                    store.delete(sid)
+            self.assertFalse(first.allowed)
+            self.assertEqual(first.reason_code, "DETECTOR_TIMEOUT")
+            self.assertFalse(second.allowed)
+            self.assertEqual(second.reason_code, "DETECTOR_DISABLED_AFTER_TIMEOUT")
 
 
 class TrustedRunnerTests(unittest.TestCase):

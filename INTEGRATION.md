@@ -20,7 +20,7 @@ Router 默认实例为 `SecurityForwardingGate()`；`PlaceholderGate` 仅保留�
 - `GateDecision` 包含严格布尔值 `allowed`，以及 `reason_code`、`session_label`、`detection_types`、`inspection_complete`、`latency_ms`。Router 拒绝类型不正确的结果。
 - M1 Content Detection 已实现：使用 detect-secrets、Presidio 和编码变体扫描，检查完整用户/助手对话、系统提示及动态字段。固定模型和生成元数据不参与内容检测；URL userinfo/query 和非固定应用请求头也会检查。固定 Content-Type、X-Trial-Id、X-Relay-Mode 被排除。HTTP 库生成的 Host、Content-Length 不属于应用候选请求头。
 - M2 Session Provenance 已实现：读取当前会话的来源标签；CONFIDENTIAL 或 UNKNOWN 均拒绝外发，只有 PUBLIC 可通过 M2。
-- M1 模式要求扫描完整且无敏感发现；M2 模式只检查会话标签；默认 M1_M2 要求两者都通过。扫描不完整、依赖不可用、无效策略或 Gateway 内部异常均 Fail-Closed。
+- M1 模式要求扫描完整且无敏感发现；M2 模式只检查会话标签；默认 M1_M2 要求两者都通过。扫描不完整、依赖不可用、检测超时、无效策略或 Gateway 内部异常均 Fail-Closed。检测超时后该 Gate 实例持续拒绝 M1 请求，直至服务重启。
 - 获准的 body 和应用请求头原样交给 `send_payload()`，不在检查后重建请求，不自动重试或跟随重定向。
 
 ## HTTP 与会话接口
@@ -39,7 +39,8 @@ Router 默认实例为 `SecurityForwardingGate()`；`PlaceholderGate` 仅保留�
 该认证也适用于 internal_only 请求中的这些字段；普通无标签、默认模式请求不需要该头。
 这是本机实验认证，不是用户身份认证。`X-Experiment-Token` 不转发给 Relay/Provider。
 
-`X-Trial-Id` 是可选请求头：API 将其传给 Router 和 `OutboundRequest.trial_id`；
+`X-Trial-Id` 是可选请求头，必须符合 `<config>:<task_id>:r<run>` 的受限字符及长度格式。
+API 和 Gateway 都会拒绝无效或不一致的值，避免未扫描 header 成为外发通道。有效 ID 会传给 Router 和 `OutboundRequest.trial_id`；
 Gateway 检查审计写入 `trial_id`，外发时非空值作为 `X-Trial-Id` 发送。
 Router 同时发送 `X-Relay-Mode`。Trial ID 本身不授予标签或模式控制权限。
 
@@ -62,7 +63,7 @@ Router 同时发送 `X-Relay-Mode`。Trial ID 本身不授予标签或模式控�
 |---|---|---|
 | Gate DENY | 不调用外部发送函数 | deny / gate_denied；Internal Fallback，external_attempted=false |
 | Gate ALLOW | 发送同一候选请求 | 成功时 external / allow；external_attempted=true |
-| Gateway 内部异常或扫描不完整 | 返回拒绝决定，不外发 | deny / gate_denied；具体原因保存在 Gate 审计 |
+| Gateway 内部异常或扫描不完整 | 返回不完整决定，不外发 | error / gate_error；具体原因保存在 Gate 审计 |
 | inspect 抛出未捕获异常或返回无效结果 | 不外发 | error / gate_error；Internal Fallback |
 | 外部发送失败 | 可能已到达接收端 | allow / external_error；Internal Fallback，external_attempted=true |
 | gate_mode=none | Router 直接生成 ALLOW，不调用 Gateway | 用于受认证控制实验；外部失败仍按上述逻辑回退 |
@@ -103,7 +104,9 @@ none 模式和 internal_only 路径不产生 Gateway 检查审计；来源标签
 
 ## 待对接接口与验证范围
 
-- Runner 已提交逐轮 source_label、gate_mode、relay_mode 和 X-Experiment-Token，并校验服务端回显。旧后端缺少回显时试验标为 error，不能仅凭配置名称计为已执行。
+- Runner 在 C1/C2 提交逐轮 source_label、gate_mode、relay_mode 和 X-Experiment-Token，并校验服务端回显。旧后端缺少回显时试验标为 error，不能仅凭配置名称计为已执行。C0 不提交这些实验字段、不需要令牌，与 C0 pilot 基线保持一致。
+- Runner 在每个 trial 结束时验证 `DELETE /sessions/{id}` 响应；重置失败使该 trial 为 error，并停止后续 trial、返回非零状态。
+- 预注册主矩阵为七个配置（4,200 trials）；`C1-M1_M2` 和 `C2-M1_M2` 仅用于补充组合策略验收，单独报告。
 - Relay 已处理 X-Relay-Mode，将 X-Trial-Id 传播至 Provider；两端日志按完整 Trial ID 区分重复试验。Provider 接收非流式 Ollama chat JSON，先写 ingress 再调用独立外部模型。上游失败不抹去已收到请求的证据。
 - 既有自动测试覆盖拒绝不发送、异常关闭、获准请求字节一致、后续轮次重新检查、重定向阻止、外部失败回退、来源标签和认证。真实 M1 插件测试另需检测依赖、英文模型和生成的任务输入，安装与测试命令见 `QUICKSTART.md`。
 - 2026-11-22 已跑通 10 个真实双模型集成场景，核对两端接收记录、模式执行、审计、Trial-ID 关联及泄漏提取。范围为固定虚构场景，不等于完整统计实验；步骤和报告说明见 docs/B_INTEGRATION.md。

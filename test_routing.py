@@ -53,6 +53,22 @@ class RoutingTests(unittest.TestCase):
         send.assert_not_called()
 
     @patch("routing.generate_answer", return_value="内部回答")
+    @patch("routing.send_payload")
+    @patch("routing.gate")
+    def test_incomplete_inspection_is_reported_as_gate_error(self, gate, send, internal):
+        gate.inspect.return_value = GateDecision(
+            allowed=False,
+            reason_code="DETECTOR_TIMEOUT",
+            inspection_complete=False,
+        )
+        result = self.run_route()
+        self.assertEqual(result.gate_decision, "error")
+        self.assertEqual(result.fallback_reason, "gate_error")
+        self.assertFalse(result.external_attempted)
+        send.assert_not_called()
+        internal.assert_called_once_with(self.messages)
+
+    @patch("routing.generate_answer", return_value="内部回答")
     @patch("routing.send_payload", side_effect=ModelBackendError("failed", 502))
     @patch("routing.gate")
     def test_external_failure_is_not_reported_as_blocked(self, gate, send, internal):

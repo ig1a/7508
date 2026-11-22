@@ -10,6 +10,7 @@ from model_backend import MODEL_NAME, ModelBackendError
 from routing import run_assistant
 from sessions import MAX_CONTEXT_BYTES, MAX_TURNS, store
 from security_gateway.trust import RUNNER_TOKEN_HEADER, is_trusted_runner
+from security_gateway.trial import is_valid_trial_id
 
 # 创建应用对象，启动命令中的 main:app 就是本文件中的 app。
 app = FastAPI(title="BrandAI Assistant", version="0.4.0")
@@ -57,6 +58,8 @@ def chat(request: ChatRequest, x_trial_id: Annotated[str | None, Header()] = Non
          x_experiment_token: Annotated[str | None, Header(alias=RUNNER_TOKEN_HEADER)] = None):
     """最多四轮的内部问答；省略 session_id 创建新会话。"""
     started = perf_counter()
+    if x_trial_id is not None and not is_valid_trial_id(x_trial_id):
+        raise HTTPException(400, "Invalid X-Trial-Id.")
     # source_label is privileged experiment metadata, not a user-controlled field.
     privileged_experiment_request = (
         request.source_label is not None

@@ -6,6 +6,7 @@ import os
 
 from gate import ForwardingGate, GateDecision, OutboundRequest, SecurityForwardingGate
 from model_backend import ModelBackendError, build_payload, generate_answer, send_payload
+from security_gateway.trial import is_valid_trial_id
 
 # 为中转站预留独立端口，不与内部 Ollama 的 11434 混用。
 # Relay 由小组另行提供；保留原有默认端口。
@@ -31,6 +32,8 @@ def run_assistant(
         return RoutingResult(generate_answer(messages), "internal", "not_checked", None, False, 0.0)
     if route_mode != "external_candidate":
         raise ValueError("Unknown route mode")
+    if trial_id is not None and not is_valid_trial_id(trial_id):
+        raise ValueError("Invalid trial ID")
 
     outbound_headers = (("Content-Type", "application/json"),)
     if trial_id:
@@ -61,6 +64,8 @@ def run_assistant(
         return RoutingResult(generate_answer(messages), "internal", "error", "gate_error", False, gate_ms)
 
     gate_ms = round((perf_counter() - started) * 1000, 3)
+    if not decision.inspection_complete:
+        return RoutingResult(generate_answer(messages), "internal", "error", "gate_error", False, gate_ms)
     if not decision.allowed:
         return RoutingResult(generate_answer(messages), "internal", "deny", "gate_denied", False, gate_ms)
 

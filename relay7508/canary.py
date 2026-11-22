@@ -135,7 +135,7 @@ class CanarySet:
             return {}
         hits: dict[str, list[str]] = {}
         raw_lower = text.casefold()
-        squashed = _squash(text)
+        squashed = _squash(raw_lower)
         decoded_squashed: list[str] | None = None
 
         for canary_id, needles in self._needles.items():
@@ -145,10 +145,10 @@ class CanarySet:
                 needle = needles.get(candidate)
                 if not needle:
                     continue
-                if candidate in ("verbatim", "casefold"):
-                    found = needle.casefold() in raw_lower
+                if candidate == "casefold":
+                    found = needle in raw_lower
                 elif candidate == "whitespace":
-                    found = needle in squashed
+                    found = needle.casefold() in squashed
                 else:
                     found = needle in text          # base64/url encodings are exact
                 if found:

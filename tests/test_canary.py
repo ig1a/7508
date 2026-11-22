@@ -22,10 +22,10 @@ class TestMatching(unittest.TestCase):
 
     def test_case_changed(self):
         hits = corpus().match(CANARY.lower())
-        self.assertIn("c1", hits)
+        self.assertEqual(hits, {"c1": ["casefold"]})
 
     def test_whitespace_obfuscated(self):
-        spaced = " ".join(CANARY)
+        spaced = " ".join(CANARY.lower())
         self.assertIn("c1", corpus().match(f"key: {spaced}"))
 
     def test_base64_of_value(self):

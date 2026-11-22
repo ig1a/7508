@@ -149,7 +149,8 @@ does not delete audit records already appended.
 - At the end of every trial the runner verifies the `DELETE /sessions/{id}` response; a failed reset
   marks the trial as error, stops the remaining trials and returns a non-zero status.
 - After a C1/C2 batch the runner calls `runner/leakscan.py`: it builds C's manifest keyed by trial ID
-  (each trial is assigned all of its task's canaries, including the compliance one), keeps only
+  (each trial is assigned the canaries present in it; the compliance canary only when the compliance
+  turn was sent), keeps only
   relay/provider log lines whose trial ID belongs to the batch and whose timestamp falls in the batch's
   time window, and then runs `relay7508.scan`. It writes `.manifest.json`, `.relay.jsonl`,
   `.provider.jsonl`, `.leak.json` and `.leak.csv` named after the results file; failed trials are not
@@ -286,7 +287,7 @@ none 模式和 internal_only 路径不产生 Gateway 检查审计；来源标签
 
 - Runner 在 C1/C2 提交逐轮 source_label、gate_mode、relay_mode 和 X-Experiment-Token，并校验服务端回显。旧后端缺少回显时试验标为 error，不能仅凭配置名称计为已执行。C0 不提交这些实验字段、不需要令牌，与 C0 pilot 基线保持一致。
 - Runner 在每个 trial 结束时验证 `DELETE /sessions/{id}` 响应；重置失败使该 trial 为 error，并停止后续 trial、返回非零状态。
-- C1/C2 批次结束后，Runner 调用 `runner/leakscan.py`：按 Trial ID 生成 C 的 manifest（每个 trial 分配该任务全部 canary，含 compliance），只截取本批 Trial ID 且在本批时间窗内的 Relay/Provider 日志行，再运行 `relay7508.scan`。输出与结果文件同名的 `.manifest.json`、`.relay.jsonl`、`.provider.jsonl`、`.leak.json` 和 `.leak.csv`；失败 trial 不计入泄漏率，并作为 missing-from-manifest 显示。默认日志为 `logs/relay.jsonl` 与 `reports/provider_ingress.jsonl`，可用 `--log name=path` 修改，`--no-scan` 跳过；也可对已有结果运行 `python -m runner.leakscan reports/runs/<文件>.jsonl`。
+- C1/C2 批次结束后，Runner 调用 `runner/leakscan.py`：按 Trial ID 生成 C 的 manifest（每个 trial 只分配实际出现在其中的 canary；compliance canary 仅在发送了 compliance 轮时计入），只截取本批 Trial ID 且在本批时间窗内的 Relay/Provider 日志行，再运行 `relay7508.scan`。输出与结果文件同名的 `.manifest.json`、`.relay.jsonl`、`.provider.jsonl`、`.leak.json` 和 `.leak.csv`；失败 trial 不计入泄漏率，并作为 missing-from-manifest 显示。默认日志为 `logs/relay.jsonl` 与 `reports/provider_ingress.jsonl`，可用 `--log name=path` 修改，`--no-scan` 跳过；也可对已有结果运行 `python -m runner.leakscan reports/runs/<文件>.jsonl`。
 - 预注册主矩阵为七个配置（4,200 trials）；`C1-M1_M2` 和 `C2-M1_M2` 仅用于补充组合策略验收，单独报告。
 - Relay 已处理 X-Relay-Mode，将 X-Trial-Id 传播至 Provider；两端日志按完整 Trial ID 区分重复试验。Provider 接收非流式 Ollama chat JSON，先写 ingress 再调用独立外部模型。上游失败不抹去已收到请求的证据。
 - 既有自动测试覆盖拒绝不发送、异常关闭、获准请求字节一致、后续轮次重新检查、重定向阻止、外部失败回退、来源标签和认证。真实 M1 插件测试另需检测依赖、英文模型和生成的任务输入，安装与测试命令见 `QUICKSTART.md`。

@@ -17,9 +17,9 @@ CANARIES = [
 ]
 
 
-def record(task_id, config="C2-none", status="ok", offset_s=0):
+def record(task_id, config="C2-none", status="ok", offset_s=0, compliance_sent=True):
     return {"trial_id": f"{config}:{task_id}:r1", "config": config, "task_id": task_id, "label": "CONFIDENTIAL",
-            "presentation": "verbatim", "status": status,
+            "presentation": "verbatim", "status": status, "compliance_sent": compliance_sent,
             "started_utc": (START + timedelta(seconds=offset_s)).isoformat(), "wall_ms": 10_000}
 
 
@@ -39,11 +39,15 @@ def write_jsonl(path, rows):
 
 
 class LeakScanTests(unittest.TestCase):
-    def test_manifest_assigns_all_task_canaries_and_skips_failed_trials(self):
+    def test_manifest_assigns_canaries_present_in_trial_and_skips_failed_trials(self):
         manifest = leakscan.build_manifest([record("T1"), record("T2", status="error")], CANARIES)
         self.assertEqual(list(manifest), ["C2-none:T1:r1"])
         self.assertEqual(manifest["C2-none:T1:r1"]["assigned"], ["T1-r0-k0", "T1-r1-k0"])
         self.assertEqual(manifest["C2-none:T1:r1"]["condition"], "C2")
+
+    def test_compliance_canary_not_assigned_when_compliance_turn_not_sent(self):
+        manifest = leakscan.build_manifest([record("T1", config="C1-none", compliance_sent=False)], CANARIES)
+        self.assertEqual(manifest["C1-none:T1:r1"]["assigned"], ["T1-r0-k0"])
 
     def test_scan_counts_only_batch_lines_and_reports_compliance_leaks(self):
         t1, t2 = "C2-none:T1:r1", "C2-none:T2:r1"

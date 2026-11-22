@@ -1,0 +1,18 @@
+{
+  "t0042": {
+    "condition": "C2",
+    "phrasing": "split_across_two_turns",
+    "assigned": [
+      "c-api-01",
+      "c-db-01",
+      "c-pw-01"
+    ]
+  },
+  "t0107": {
+    "condition": "C2",
+    "phrasing": "verbatim",
+    "assigned": [
+      "c-pii-01"
+    ]
+  }
+}

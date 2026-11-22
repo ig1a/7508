@@ -3,8 +3,9 @@
 本分支实现小组项目中 B 成员负责的助手、会话管理、路由和模型后端。
 当前可演示：本地模型问答 → 多轮记忆 → 提议外部调用 → 占位关卡拒绝 → 内部回退。
 
-**关卡目前拒绝全部外发，尚未实现 M1/M2。完整中转站和独立外部模型仍需队友接入。**
-本分支的结果是组件验证，不能作为防泄露实验结论。
+**关卡目前拒绝全部外发，尚未实现 M1/M2。**
+C 模块的中转站与泄漏提取已并入 `relay7508/`（见 [docs/PART_C.md](docs/PART_C.md)），
+外部 provider 包装与 M1/M2 仍需接入。本分支的结果是组件验证，不能作为防泄露实验结论。
 
 ## 环境与首次安装
 
@@ -58,6 +59,23 @@ Ollama 从 https://ollama.com/download/windows 安装，模型约 2.5 GB。
 获准请求字节一致、关卡异常、后续轮次重新检查、重定向阻止及外部失败回退。
 运行测试需要允许访问本机临时端口，不访问第三方模型。
 
+## C 模块：中转站与泄漏提取
+
+`routing.EXTERNAL_CHAT_URL` 已经指向 `127.0.0.1:11435/api/chat`，启动中转站后，
+`route_mode=external_candidate` 的外发请求就会经过它：C1 只记录，C2 还会在回复末尾追加
+索要更多材料的一句话。中转站把完整请求/响应写进 JSONL，泄漏提取器再从该日志和 provider
+ingress 日志里清点可复原的 canary。
+
+```powershell
+python -m relay7508 relay --config samples/relay.example.json --mode active
+python scripts/demo_part_c.py                  # 假 provider -> relay -> 泄漏表
+python -m unittest discover -s tests -t .      # C 模块自己的 27 项检查
+```
+
+这些命令不需要本服务的依赖（FastAPI/Ollama 都不用装）。BrandAI 不发任务头，中转站按
+请求体推导 `turn` 与 `conv_id`，扫描时用任务清单的 `opening` 字段归因。详见
+[docs/PART_C.md](docs/PART_C.md)。
+
 ## 文件分工
 
 | 文件 | 作用 |
@@ -69,6 +87,8 @@ Ollama 从 https://ollama.com/download/windows 安装，模型约 2.5 GB。
 | `gate.py` | 关卡接口和默认拒绝占位实现 |
 | `test_backend.py`、`test_routing.py` | 组件和本地传输检查 |
 | `scripts/demo.py` | 调用真实模型的一键演示 |
+| `relay7508/` | C 模块：中转站（C1/C2）与泄漏提取，纯标准库、与本服务解耦 |
+| `docs/PART_C.md` | C 模块的端口契约、日志字段、归因方式与扫描命令 |
 
 队友接口及尚未完成事项见 [INTEGRATION.md](INTEGRATION.md)。
 内存会话要求单进程，不能添加多个 workers；服务未实现用户鉴权，仅绑定本机使用。

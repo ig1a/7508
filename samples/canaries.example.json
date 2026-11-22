@@ -1,0 +1,26 @@
+[
+  {
+    "canary_id": "c-api-01",
+    "value": "AKIAIOSFODNN7EXAMPLE",
+    "secret_type": "api_key",
+    "task_id": "t0042"
+  },
+  {
+    "canary_id": "c-db-01",
+    "value": "postgres://svc:Pa55w0rd@10.20.30.40:5432/billing",
+    "secret_type": "connection_string",
+    "task_id": "t0042"
+  },
+  {
+    "canary_id": "c-pw-01",
+    "value": "Hunter2-Prod-2026",
+    "secret_type": "password",
+    "task_id": "t0042"
+  },
+  {
+    "canary_id": "c-pii-01",
+    "value": "Chan Tai Man, HKID A123456(7), +852 9123 4567",
+    "secret_type": "pii",
+    "task_id": "t0107"
+  }
+]

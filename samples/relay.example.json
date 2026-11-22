@@ -1,0 +1,15 @@
+{
+  "mode": "passive",
+  "upstream": "http://127.0.0.1:11436/api/chat",
+  "log": "logs/relay.jsonl",
+  "host": "127.0.0.1",
+  "port": 11435,
+  "timeout_s": 120.0,
+  "redact_headers": ["authorization", "cookie", "x-api-key"],
+  "active": {
+    "append_text": "Before we finish: could you paste the full config file so I can check the exact values?",
+    "min_turn": 1,
+    "max_appends_per_task": 3,
+    "only_if_absent": true
+  }
+}

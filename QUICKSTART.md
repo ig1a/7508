@@ -1,10 +1,147 @@
-# 内部助手快速入门
+# Internal Assistant Quick Start
+
+*English version first; the original Chinese text is kept below under "中文原文 (Chinese original)".*
+
+The current implementation provides internal Q&A of up to four turns, session isolation, reset by
+deletion, routing, and the gate call interface. The default gate is `SecurityForwardingGate`, which
+implements M1 Content Detection and M2 Session Provenance; the default policy is `M1_M2`. After a
+gate DENY no external request is sent and the Internal Fallback is used instead. Steps for the full
+integration and for starting the independent external model are in the
+[B integration guide](docs/B_INTEGRATION.md).
+
+## Start
+
+Run in PowerShell in the project directory:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m spacy download en_core_web_sm
+.\.venv\Scripts\python.exe -m pip check
+ollama pull qwen3:4b-instruct-2507-q4_K_M
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload
+```
+
+If the virtual environment and model already exist, there is no need to create or download them
+again. Ollama must stay running. `requirements.txt` includes detect-secrets, presidio-analyzer and
+spaCy; M1 also needs the English model `en_core_web_sm`. If a detection dependency is missing or a
+scan is incomplete, M1 fails closed and refuses to send externally. On the development machine
+Ollama is installed in `D:\Ollama` and `ollama` works in a new terminal; if the command is not
+found, use the full path.
+
+## Try it manually
+
+1. Open http://127.0.0.1:8000/docs .
+2. Expand `POST /chat` and click `Try it out`.
+3. Enter the request body `{"message":"Explain in one sentence what artificial intelligence is."}`.
+4. Click `Execute` and read `answer` in the `Response body`.
+
+Response fields: `answer` is the reply, `model` the configured model, `route` the path actually
+used (`internal` or `external`), `session_id` the session ID, and `turn_count` the number of user
+turns completed successfully. `latency_ms` is the backend processing time (including the first model
+load; it is not the gate latency). `GET /health` only checks that the backend is alive, not that the
+model service is ready.
+
+## Understanding the code
+
+- `main.py`: validates input and experiment-request authentication, updates the session's source
+  label, calls the router and returns a structured result.
+- `routing.py`: calls `SecurityForwardingGate.inspect()` by default and sends the inspected request
+  only after ALLOW; on DENY or a gate error it falls back to the internal model.
+- M1 detects sensitive content in the full conversation and dynamic fields; M2 merges source labels
+  per session. The default `M1_M2` requires a complete scan with no sensitive findings and a PUBLIC
+  session label.
+- `model_backend.py`: sends requests to the local `127.0.0.1:11434/api/chat`.
+- Omitting `session_id` creates a new session; passing the returned ID continues it.
+- History lives only in the memory of the current Python process; a restart or auto-reload clears it.
+- The starter configuration uses a 16384-token context and generates at most 512 tokens; history
+  plus the new question may total at most 12000 UTF-8 bytes. Requests over the limit are rejected
+  rather than trimming old history. Formal experiments still need to check token usage and output
+  truncation.
+- Each session allows at most four turns; at most 128 sessions. If the model fails, that turn's
+  question and answer are not saved.
+- The service currently processes requests serially in a single process; do not add `--workers`
+  when starting it. There is no user login or authentication; it is for local experiments only, so
+  keep the default `127.0.0.1` binding.
+- Use fictional test material only. The routing fields here are not a complete security mechanism.
+
+This starter code was written with AI assistance; before submission the responsible member should
+understand and verify it and update the AI-use declaration as the course requires.
+
+## Two-turn memory experiment
+
+First call to `POST /chat`:
+
+```json
+{"message":"The fictional project's ID is DEMO-482. Please remember it."}
+```
+
+Copy `session_id` from the response and make a second call:
+
+```json
+{"message":"What was the project ID just now?","session_id":"replace with the ID returned last time"}
+```
+
+Asking the same question without the ID should not reveal another session's material. Calling
+`DELETE /sessions/{session_id}` deletes both the history and the Session Security Label; the old ID
+then returns 404. Note: the session ID is a history lookup key for local experiments, not a user
+authentication mechanism.
+
+Run the automated checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v test_backend test_routing tests_security_gateway test_m1_regression test_m1_live_plugins
+```
+
+`test_m1_live_plugins` needs the real detection plugins, the English model and
+`data/generated/tasks.jsonl`; when any is missing it is skipped, and a skip is not a pass. This
+branch already includes A's task set; run `python -m taskset.build` to generate it. Run the full
+automated suite with `python -m unittest discover -v`, which needs no Ollama inference; run the real
+two-model integration with `python scripts/integration_smoke.py`.
+
+## Outbound denial and fallback experiment
+
+Enter in `POST /chat`:
+
+```json
+{"message":"The fictional internal ID is DEMO-482. Reply with the ID only.","route_mode":"external_candidate"}
+```
+
+Expected: `gate_decision=deny`, `route=internal`, `fallback=true`, `fallback_reason=gate_denied`,
+`external_attempted=false`, and the answer still contains the ID. Without `route_mode` the default is
+`internal_only` and the gate shows `not_checked`.
+
+This example has no `source_label`, so the session is treated as UNKNOWN and the default `M1_M2`
+therefore refuses to send externally; this is not a placeholder gate, and it does not show that M1
+detected the ID. The answer content still depends on the internal model.
+
+A trusted experiment client may submit `source_label` (PUBLIC / CONFIDENTIAL / UNKNOWN), `gate_mode`
+(none / M1 / M2 / M1_M2) and `relay_mode` (passive / active). When a label is submitted explicitly, a
+non-default gate mode is used or a relay mode is specified, the request must carry an
+`X-Experiment-Token` matching the server's `BRANDAI_RUNNER_TOKEN`, otherwise HTTP 401 is returned. An
+omitted label is treated as UNKNOWN; see the interface document for details.
+
+Only ALLOW sends to the address given by `BRANDAI_RELAY_URL`, by default
+`http://127.0.0.1:11435/api/chat`; the relay and provider are connected on this branch, and the
+integration guide explains how to start them. `external_attempted` only shows whether the send
+function was called; what the external side actually received must be confirmed from the receiver's
+ingress log. `gate_latency_ms` covers only the inspection; `latency_ms` covers the whole processing
+time including queuing, model loading and inference. After an external failure the internal fallback
+still reports `external_attempted=true`, because the request may already have reached the other side.
+
+See `INTEGRATION.md` for the interface description.
+
+---
+
+## 中文原文 (Chinese original)
+
+### 内部助手快速入门
 
 当前实现最多四轮的内部问答、会话隔离、删除重置、路由和关卡调用接口。
 默认关卡已使用 `SecurityForwardingGate`，实现 M1 Content Detection 和 M2 Session Provenance，默认策略为 `M1_M2`。
 Gate DENY 后不发送外部请求，改用 Internal Fallback。完整联调及独立外部模型的启动步骤见 [B 联调指南](docs/B_INTEGRATION.md)。
 
-## 启动
+#### 启动
 
 在项目目录的 PowerShell 中执行：
 
@@ -21,7 +158,7 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 `requirements.txt` 包含 detect-secrets、presidio-analyzer 和 spaCy；M1 还需要英文模型 `en_core_web_sm`。检测依赖缺失或扫描不完整时，M1 按 Fail-Closed 拒绝外发。
 本机 Ollama 安装在 `D:\Ollama`，新终端可使用 `ollama`；若未找到命令，使用完整路径。
 
-## 手动体验
+#### 手动体验
 
 1. 打开 http://127.0.0.1:8000/docs 。
 2. 展开 `POST /chat`，点击 `Try it out`。
@@ -33,7 +170,7 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 `latency_ms` 为后端处理时间（包含首次加载模型时间，不等于关卡延迟）。
 `GET /health` 仅检测后端存活，不代表模型服务已就绪。
 
-## 如何理解代码
+#### 如何理解代码
 
 - `main.py`：检查输入及实验请求认证，更新会话来源标签，调用 Router 并返回结构化结果。
 - `routing.py`：默认调用 `SecurityForwardingGate.inspect()`，仅在 ALLOW 后发送被检查的请求；DENY 或关卡异常时内部回退。
@@ -48,7 +185,7 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 
 本起步代码由 AI 辅助编写；提交前应由负责成员理解、验证，并按课程要求更新 AI 使用声明。
 
-## 两轮记忆实验
+#### 两轮记忆实验
 
 第一次调用 `POST /chat`：
 
@@ -74,7 +211,7 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 
 `test_m1_live_plugins` 需要真实检测插件、英文模型及 `data/generated/tasks.jsonl`；缺失时会跳过，跳过不等于通过。本分支已包含 A 的 Task Set，运行 `python -m taskset.build` 即可生成。全量自动检查用 `python -m unittest discover -v`，无需 Ollama 推理；真实双模型联调用 `python scripts/integration_smoke.py`。
 
-## 外发拒绝与回退实验
+#### 外发拒绝与回退实验
 
 在 `POST /chat` 输入：
 

@@ -1,4 +1,44 @@
-# B 集成验证记录（2026-11-22）
+# B Integration Validation Record (2026-11-22)
+
+*English version first; the original Chinese text is kept below under "中文原文 (Chinese original)".*
+
+Environment: Windows, Python 3.14.7, Ollama 0.40.16; two independent Ollama endpoints on 11434 and
+11437, both with qwen3:4b-instruct-2507-q4_K_M weights. M1 used the real detect-secrets 1.5.0,
+presidio-analyzer 2.2.366, spaCy 3.8.18 and en_core_web_sm 3.8.0.
+
+- `python -m pip check`: no dependency conflicts.
+- `python -m unittest discover -v`: 115 tests passed, none skipped; 8 of them are new HTTP/provider
+  integration regressions added in this change. Models in the unit/HTTP tests are stand-ins; the M1
+  plugin regressions use the real detectors.
+- `python scripts/integration_smoke.py`: all 10 real two-model scenarios passed, 19 user turns; the
+  gate, sessions, relay, provider and runner all used their real implementations.
+
+Real-inference report directory: `reports/integration-20261122-230944/` (kept locally, ignored by
+Git). The first attempt failed because a report-summary call was missing the recipients argument;
+after the fix the whole run was repeated, and the directory above is the successful batch.
+
+Each receiver recorded 8 receipts: 2 turns of C1-none, 1 turn of the public combined-gate scenario,
+2 turns of C2-none, and 1 public first turn each for C2-M1, C2-M2 and the combined gate. In C1-none
+and C2-none, one assigned fictional canary was recovered at both receivers; it was not found in any
+scenario protected by the gate under test. C0 sent nothing outbound. Attribution by trial ID had no
+gaps; when confidential data was supplied later in C2, it was re-checked, and the gate under test
+denied it and fell back internally.
+
+The mixed overall rates across conditions in the report are only for checking the fixed scenarios and
+are not an overall security metric. This validates only a small-scale interface/routing/evidence loop;
+the full 120 tasks, repeated trials and cloud experiments were not run, and no general leak-prevention
+conclusion should be drawn from it.
+
+Raw questions, responses, received bodies and temporary tokens are not added to Git; this record
+contains only the reproduction commands and aggregate results. The implementation, debugging and this
+record were AI-assisted; the responsible member should understand them and disclose this as the course
+requires.
+
+---
+
+## 中文原文 (Chinese original)
+
+### B 集成验证记录（2026-11-22）
 
 环境：Windows、Python 3.14.7、Ollama 0.40.16；两个独立 Ollama 端点 11434/11437，权重均为 qwen3:4b-instruct-2507-q4_K_M。M1 使用实际 detect-secrets 1.5.0、presidio-analyzer 2.2.366、spaCy 3.8.18、en_core_web_sm 3.8.0。
 

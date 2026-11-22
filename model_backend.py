@@ -1,11 +1,12 @@
 """把模型调用集中在此文件，便于之后对接小组的路由模块。"""
 
 import json
+import os
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-MODEL_NAME = "qwen3:4b-instruct-2507-q4_K_M"
-OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat"
+MODEL_NAME = os.environ.get("BRANDAI_MODEL", "qwen3:4b-instruct-2507-q4_K_M")
+OLLAMA_CHAT_URL = os.environ.get("BRANDAI_INTERNAL_URL", "http://127.0.0.1:11434/api/chat")
 
 
 class ModelBackendError(Exception):

@@ -1,5 +1,7 @@
 # C 模块：中转站与泄漏提取
 
+> B 集成分支更新：当前 Router 已发送 X-Trial-Id 与 X-Relay-Mode；Relay 按每个请求的模式切换，并按完整 Trial ID 隔离日志与注入次数。无头客户端仍使用下文的 opening 推导路径。独立 provider.py 和真实双模型联调已加入，最新步骤见 [B_INTEGRATION.md](B_INTEGRATION.md)；下文“待对接/无关卡未实现”是 C 分支初始说明。
+
 对应提案 §3 "Build" 的第 2 项（relay / transfer station）与第 5 项（leak extractor）。
 纯标准库实现（`http.server` + `http.client`），任何队友机器 `python relay` 即可启动，
 不需要 mitmproxy、FastAPI 或任何第三方包。

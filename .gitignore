@@ -19,3 +19,4 @@ security_audit.jsonl
 provenance_audit.jsonl
 *.gguf
 *.safetensors
+logs/

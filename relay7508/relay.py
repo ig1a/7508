@@ -135,7 +135,7 @@ class RelayHandler(BaseHTTPRequestHandler):
         for header, value in self.headers.items():
             if header.lower().startswith(METADATA_PREFIX):
                 key = header.lower()[len(METADATA_PREFIX):].replace("-", "_")
-                if key in {"task_id", "condition", "turn", "seed", "run_id"}:
+                if key in {"task_id", "condition", "turn", "seed", "run_id", "trial_id", "relay_mode"}:
                     meta[key] = value
         return meta
 
@@ -152,8 +152,12 @@ class RelayHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ forwarding
     def _forward(self, method: str, body: bytes) -> tuple[int, list[tuple[str, str]], bytes]:
         parts = urlsplit(self.config.upstream)
-        path = self.path
-        target = (parts.path.rstrip("/") if parts.path else "") + path
+        incoming = urlsplit(self.path)
+        # Accept either a provider origin or its exact chat endpoint, not /api/chat twice.
+        target = parts.path.rstrip("/") or incoming.path
+        query = "&".join(q for q in (parts.query, incoming.query) if q)
+        if query:
+            target += "?" + query
 
         headers = {}
         for header, value in self.headers.items():
@@ -180,10 +184,15 @@ class RelayHandler(BaseHTTPRequestHandler):
         flow_id = uuid.uuid4().hex[:12]
         meta = self._metadata()
         raw_body = self._read_body()
+        mode = meta.get("relay_mode", self.config.mode)
+        if mode not in {"passive", "active"}:
+            self.send_error(400, "Invalid relay mode")
+            return
         request_body = _parse_json(raw_body)
         # BrandAI sends no task headers, so fall back to values derivable from the body.
         conv_id, body_turn = conversation_key(request_body)
-        task_id = meta.get("task_id") or "unknown-task"
+        trial_id = meta.get("trial_id")
+        task_id = trial_id or meta.get("task_id") or "unknown-task"
         turn = self._next_turn(task_id, meta.get("turn") or
                                (str(body_turn) if body_turn is not None else None))
         if conv_id:
@@ -199,10 +208,11 @@ class RelayHandler(BaseHTTPRequestHandler):
 
         response_body = _parse_json(payload)
         rewrite: dict = {"applied": False, "reason": "passive"}
-        if self.config.is_active and response_body is not None and status == 200:
+        if mode == "active" and response_body is not None and status == 200:
             paths, text = _extract_reply_text(response_body)
             if paths:
-                addition = self.config.active.want_append(task_id, turn, text)
+                with self.counter_lock:
+                    addition = self.config.active.want_append(trial_id or conv_id or task_id, turn, text)
                 if addition:
                     new_text = (text + "\n\n" + addition).strip()
                     if _set_reply_text(response_body, new_text):
@@ -222,8 +232,10 @@ class RelayHandler(BaseHTTPRequestHandler):
                 "method": method,
                 "path": self.path,
                 "task_id": task_id,
+                "trial_id": trial_id,
                 "conv_id": conv_id,
-                "condition": meta.get("condition", "unknown"),
+                "condition": meta.get("condition", "C2" if mode == "active" else "C1"),
+                "relay_mode": mode,
                 "turn": turn,
                 "metadata": meta,
                 "elapsed_ms": round(elapsed_ms, 3),

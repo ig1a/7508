@@ -2,7 +2,7 @@
 
 当前实现最多四轮的内部问答、会话隔离、删除重置、路由和关卡调用接口。
 默认关卡已使用 `SecurityForwardingGate`，实现 M1 Content Detection 和 M2 Session Provenance，默认策略为 `M1_M2`。
-Gate DENY 后不发送外部请求，改用 Internal Fallback。Relay/Provider 服务及 Runner 实验字段的对接要求见 `INTEGRATION.md`。
+Gate DENY 后不发送外部请求，改用 Internal Fallback。完整联调及独立外部模型的启动步骤见 [B 联调指南](docs/B_INTEGRATION.md)。
 
 ## 启动
 
@@ -72,7 +72,7 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 .\.venv\Scripts\python.exe -m unittest -v test_backend test_routing tests_security_gateway test_m1_regression test_m1_live_plugins
 ```
 
-`test_m1_live_plugins` 需要真实检测插件、英文模型及 `data/generated/tasks.jsonl`；缺少前置条件时会跳过，跳过不等于验证通过。固定任务由现有 `feat/a-threat-model` 分支的 `python -m taskset.build` 生成；将该分支生成的 `tasks.jsonl` 放在上述路径即可，不需要复制 Task Set 实现。其余测试使用模拟模型及本机临时 HTTP 接收器，不需要运行 Ollama 推理。
+`test_m1_live_plugins` 需要真实检测插件、英文模型及 `data/generated/tasks.jsonl`；缺失时会跳过，跳过不等于通过。本分支已包含 A 的 Task Set，运行 `python -m taskset.build` 即可生成。全量自动检查用 `python -m unittest discover -v`，无需 Ollama 推理；真实双模型联调用 `python scripts/integration_smoke.py`。
 
 ## 外发拒绝与回退实验
 
@@ -90,7 +90,7 @@ ollama pull qwen3:4b-instruct-2507-q4_K_M
 
 可信实验客户端可以提交 `source_label`（PUBLIC / CONFIDENTIAL / UNKNOWN）、`gate_mode`（none / M1 / M2 / M1_M2）及 `relay_mode`（passive / active）。显式提交标签、使用非默认关卡模式或指定 Relay 模式时，必须携带与服务端 `BRANDAI_RUNNER_TOKEN` 匹配的 `X-Experiment-Token`，否则返回 HTTP 401。省略标签时按 UNKNOWN 处理；详见接口文档。
 
-ALLOW 才会向 `BRANDAI_RELAY_URL` 指定的地址发送，默认地址为 `http://127.0.0.1:11435/api/chat`；本分支不提供 Relay/Provider 服务。
+ALLOW 才会向 `BRANDAI_RELAY_URL` 指定的地址发送，默认地址为 `http://127.0.0.1:11435/api/chat`；Relay/Provider 已在本分支接入，启动方法见联调指南。
 `external_attempted` 只表示是否调用了发送函数；外部真正收到什么必须由接收端 ingress 日志确认。
 `gate_latency_ms` 仅计算检查耗时；`latency_ms` 包含排队、模型加载和推理等整个处理时间。
 外部失败后内部回退仍保留 `external_attempted=true`，因为请求可能已经到达对方。

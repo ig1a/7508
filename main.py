@@ -40,6 +40,9 @@ class ChatResponse(BaseModel):
     fallback_reason: str | None
     external_attempted: bool
     gate_latency_ms: float
+    effective_gate_mode: str
+    relay_mode: str
+    trial_id: str | None
 
 
 # 浏览器访问 /health 时，FastAPI 会调用下面的函数。
@@ -104,6 +107,9 @@ def chat(request: ChatRequest, x_trial_id: Annotated[str | None, Header()] = Non
         fallback_reason=result.fallback_reason,
         external_attempted=result.external_attempted,
         gate_latency_ms=result.gate_latency_ms,
+        effective_gate_mode=request.gate_mode if request.route_mode == "external_candidate" else "not_checked",
+        relay_mode=request.relay_mode or "passive",
+        trial_id=x_trial_id,
     )
 
 

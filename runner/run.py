@@ -6,7 +6,7 @@ Usage:
   python -m runner.run --summary reports/runs/<file>.jsonl  # re-print a summary
 
 The assistant (and for C1/C2 the relay, gate and external model) must already be running and set
-up to match --config; the runner only records which configuration was requested.
+up with BRANDAI_RUNNER_TOKEN; the runner sends labels and modes on every turn.
 Output goes to reports/runs/ (git-ignored) because answers contain the synthetic secrets.
 """
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import random
 import re
 import statistics
@@ -40,6 +41,8 @@ CONFIGS = {
     "C2-none": {"route_mode": "external_candidate", "relay": "active", "gate": "none"},
     "C2-M1": {"route_mode": "external_candidate", "relay": "active", "gate": "M1"},
     "C2-M2": {"route_mode": "external_candidate", "relay": "active", "gate": "M2"},
+    "C1-M1_M2": {"route_mode": "external_candidate", "relay": "passive", "gate": "M1_M2"},
+    "C2-M1_M2": {"route_mode": "external_candidate", "relay": "active", "gate": "M1_M2"},
 }
 
 
@@ -48,13 +51,16 @@ class AssistantUnavailable(Exception):
 
 
 class Client:
-    def __init__(self, base_url: str, timeout: float):
+    def __init__(self, base_url: str, timeout: float, token: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.opener = build_opener(ProxyHandler({}))
+        self.token = token if token is not None else os.environ.get("BRANDAI_RUNNER_TOKEN")
 
     def call(self, method: str, path: str, body: dict | None = None, trial_id: str | None = None):
         headers = {"Content-Type": "application/json"}
+        if self.token and path == "/chat":
+            headers["X-Experiment-Token"] = self.token
         if trial_id:
             headers["X-Trial-Id"] = trial_id
         data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
@@ -107,7 +113,9 @@ def run_trial(client: Client, task: dict, config: str, run: int, injections: lis
 
     def send(turn: dict, index: int) -> bool:
         nonlocal session_id
-        body = {"message": turn["content"], "route_mode": cfg["route_mode"]}
+        body = {"message": turn["content"], "route_mode": cfg["route_mode"],
+                "source_label": turn["label"], "gate_mode": cfg["gate"] or "M1_M2",
+                "relay_mode": cfg["relay"] or "passive"}
         if session_id:
             body["session_id"] = session_id
         sent = time.perf_counter()
@@ -116,6 +124,13 @@ def run_trial(client: Client, task: dict, config: str, run: int, injections: lis
                  "wall_ms": round((time.perf_counter() - sent) * 1000, 1)}
         if status == 200:
             session_id = payload["session_id"]
+            expected_mode = cfg["gate"] if cfg["gate"] else "not_checked"
+            if (payload.get("effective_gate_mode") != expected_mode
+                    or payload.get("relay_mode") != body["relay_mode"]
+                    or payload.get("trial_id") != trial_id):
+                entry["error"] = "Assistant did not acknowledge requested experiment configuration"
+                record["turns"].append(entry)
+                return False
             hits = [i["injection_id"] for i in injections if i["detect"] in payload["answer"]]
             entry.update({k: v for k, v in payload.items() if k != "session_id"}, injection_seen=hits)
             record["injections_seen"] += [h for h in hits if h not in record["injections_seen"]]
@@ -237,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Assistant health check failed: {status} {health}", file=sys.stderr)
         return 1
     if args.config != "C0":
-        print(f"Note: make sure the relay/gate stack is configured as {args.config} {CONFIGS[args.config]}.")
+        print(f"Sending authenticated per-turn configuration: {args.config} {CONFIGS[args.config]}.")
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out = args.out or OUT_DIR / f"{args.config}-{stamp}.jsonl"
@@ -252,6 +267,8 @@ def main(argv: list[str] | None = None) -> int:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
                 fh.flush()
                 records.append(record)
+                if record["status"] != "ok":
+                    exit_code = 1
                 print(f"[{n}/{len(trials)}] {record['trial_id']} {record['status']} "
                       f"completed={record['task_completed']} {record['wall_ms'] / 1000:.1f}s", flush=True)
     except AssistantUnavailable as exc:

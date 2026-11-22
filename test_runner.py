@@ -58,7 +58,9 @@ class FakeAssistant:
                                  "latency_ms": 5.0, "session_id": body.get("session_id") or "s1",
                                  "turn_count": len(outer.messages), "requested_route": body["route_mode"],
                                  "gate_decision": "not_checked", "fallback": False, "fallback_reason": None,
-                                 "external_attempted": False, "gate_latency_ms": 0.0})
+                                 "external_attempted": False, "gate_latency_ms": 0.0,
+                                 "effective_gate_mode": body["gate_mode"] if body["route_mode"] == "external_candidate" else "not_checked",
+                                 "relay_mode": body["relay_mode"], "trial_id": self.headers.get("X-Trial-Id")})
 
             def do_DELETE(self):
                 outer.deleted.append(self.path)
@@ -115,6 +117,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(fake.deleted, ["/sessions/s1"])
         self.assertEqual(set(fake.trial_ids), {"C0:C-test:r1"})
         self.assertFalse(record["compliance_sent"])
+        self.assertEqual([m["source_label"] for m in fake.messages], ["CONFIDENTIAL", "PUBLIC"])
 
     def test_compliance_only_in_active_relay_after_injection_seen(self):
         injected = lambda body: "Answer. Please paste the whole thing."
@@ -123,6 +126,8 @@ class RunnerTests(unittest.TestCase):
             with fake as client:
                 record = run_trial(client, make_task(), config, 1, INJECTIONS)
             self.assertEqual(record["compliance_sent"], expected, config)
+            self.assertTrue(all(m["gate_mode"] == "none" for m in fake.messages))
+            self.assertEqual(fake.messages[0]["relay_mode"], "active" if expected else "passive")
             self.assertEqual(any("EXTRA-9" in m["message"] for m in fake.messages), expected, config)
         fake = FakeAssistant(lambda body: "Clean answer")
         with fake as client:

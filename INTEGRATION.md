@@ -7,7 +7,7 @@
 服务仅供本机实验，没有用户登录鉴权；可信来源标签及实验控制字段已使用 `X-Experiment-Token` 认证。
 
 内部地址是 `http://127.0.0.1:11434/api/chat`。
-外部地址通过 `BRANDAI_RELAY_URL` 配置，默认 `http://127.0.0.1:11435/api/chat`；本分支不提供 Relay/Provider 服务。
+外部地址通过 `BRANDAI_RELAY_URL` 配置，默认 `http://127.0.0.1:11435/api/chat`。本分支已接入 `relay7508/`，新增 `provider.py`（11436），其上游是独立 Ollama（11437）。内部地址可用 `BRANDAI_INTERNAL_URL` 配置，Provider 拒绝复用该内部端点。
 外部请求使用 Ollama 原生 chat JSON；若接收端采用其他协议，需要适配请求构建与检查契约。
 内部和外部应使用独立端点、状态和日志；可以采用相同权重，但不能直接把外部路由接回内部端点。
 
@@ -84,6 +84,8 @@ none 模式和 internal_only 路径不产生 Gateway 检查审计；来源标签
 | gate_latency_ms | Router 测量的关卡决策耗时 |
 | latency_ms | 整个处理耗时 |
 | session_id, turn_count | 会话编号和成功完成的用户轮数 |
+| effective_gate_mode | 服务端执行的关卡模式；内部路径为 not_checked |
+| relay_mode, trial_id | 服务端接受的中转模式及关联标识，供 Runner 校验 |
 
 `GateDecision` 的细分原因和标签不直接加入当前 `ChatResponse`；可从审计中查看。
 外部接收情况需要 ingress 证据确认，Internal Fallback 不会撤回已发送的请求。
@@ -101,7 +103,7 @@ none 模式和 internal_only 路径不产生 Gateway 检查审计；来源标签
 
 ## 待对接接口与验证范围
 
-- 现有 `feat/a-threat-model` Runner 发送 message/route_mode 和 Trial ID；还需向 API 提交逐轮 source_label、gate_mode、relay_mode，并携带 X-Experiment-Token。仅配置实验名称不会切换 Gateway 模式。
-- Relay 接收接口需兼容候选请求的 Ollama chat JSON，处理 X-Relay-Mode，并将 X-Trial-Id 传播至 Provider。Provider 需返回后端可解析的 `message.content` 字符串；两端 ingress 记录需关联同一 Trial ID。这些服务端接口未包含在本分支，不能把当前请求头发送能力视为对接完成。
+- Runner 已提交逐轮 source_label、gate_mode、relay_mode 和 X-Experiment-Token，并校验服务端回显。旧后端缺少回显时试验标为 error，不能仅凭配置名称计为已执行。
+- Relay 已处理 X-Relay-Mode，将 X-Trial-Id 传播至 Provider；两端日志按完整 Trial ID 区分重复试验。Provider 接收非流式 Ollama chat JSON，先写 ingress 再调用独立外部模型。上游失败不抹去已收到请求的证据。
 - 既有自动测试覆盖拒绝不发送、异常关闭、获准请求字节一致、后续轮次重新检查、重定向阻止、外部失败回退、来源标签和认证。真实 M1 插件测试另需检测依赖、英文模型和生成的任务输入，安装与测试命令见 `QUICKSTART.md`。
-- 本机临时 HTTP 接收器测试不等于完整 Relay/Provider 验收；完整外部链路仍需验证接收记录、模式执行和 Trial-ID 关联。本次文档修正不实现这些接口，也不重新运行实验。
+- 2026-11-22 已跑通 10 个真实双模型集成场景，核对两端接收记录、模式执行、审计、Trial-ID 关联及泄漏提取。范围为固定虚构场景，不等于完整统计实验；步骤和报告说明见 docs/B_INTEGRATION.md。

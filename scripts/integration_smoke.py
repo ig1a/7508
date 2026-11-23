@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 from integration_stack import local_stack
 from relay7508.canary import Canary, CanarySet
 from relay7508.scan import collect, summarise, write_reports
-from runner.run import Client, run_trial
+from runner.run import Client, new_batch_id, run_trial
 from security_gateway.detection import HybridPayloadScanner
 
 SECRET = "T7m9Q2r6L8w1Z4n5"
@@ -69,9 +69,10 @@ def run(output, internal_url, external_url):
     HybridPayloadScanner()._initialise()
     with local_stack(output, internal_url=internal_url, external_url=external_url, append_text=INJECTION["text"]) as stack:
         client = Client(stack.url, 180, token=stack.token)
+        batch_id = new_batch_id()
         try:
             for config, spec, expected_routes in CASES:
-                record = run_trial(client, spec, config, 1, [INJECTION])
+                record = run_trial(client, spec, config, 1, [INJECTION], batch_id)
                 records.append(record)
                 trial = record["trial_id"]
                 routes = [turn.get("route") for turn in record["turns"]]

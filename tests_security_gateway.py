@@ -159,16 +159,17 @@ class GateIntegrationTests(unittest.TestCase):
             "main.run_assistant", return_value=RoutingResult("ok", "internal", "deny", "gate_denied", False, 0.0)
         ) as route:
             chat(ChatRequest(message="hello", source_label="CONFIDENTIAL", gate_mode="M2"),
-                 x_trial_id="C1-M2:C-test:r1", x_experiment_token="unit-test-only")
+                 x_trial_id="C1-M2:C-test:r1:b20261123T120000-0a1b2c", x_experiment_token="unit-test-only")
             self.assertEqual(route.call_args.kwargs["gate_mode"], "M2")
-            self.assertEqual(route.call_args.kwargs["trial_id"], "C1-M2:C-test:r1")
+            self.assertEqual(route.call_args.kwargs["trial_id"], "C1-M2:C-test:r1:b20261123T120000-0a1b2c")
 
     def test_invalid_trial_id_is_rejected_before_routing(self):
         from fastapi import HTTPException
         from main import ChatRequest, chat
-        with self.assertRaises(HTTPException) as ctx:
-            chat(ChatRequest(message="hello"), x_trial_id="secret=REAL_SECRET_VALUE")
-        self.assertEqual(ctx.exception.status_code, 400)
+        for value in ("secret=REAL_SECRET_VALUE", "C1-M2:C-test:r1", "C1-M2:C-test:r1:b2026-secret"):
+            with self.subTest(value=value), self.assertRaises(HTTPException) as ctx:
+                chat(ChatRequest(message="hello"), x_trial_id=value)
+            self.assertEqual(ctx.exception.status_code, 400)
 
     def test_gate_rejects_inconsistent_trial_header_without_logging_value(self):
         from gate import OutboundRequest

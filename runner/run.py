@@ -20,6 +20,7 @@ import json
 import os
 import random
 import re
+import secrets
 import statistics
 import sys
 import time
@@ -103,14 +104,20 @@ def fact_found(fact: str, answer: str) -> bool:
     return re.search(pattern, answer, re.IGNORECASE) is not None
 
 
-def run_trial(client: Client, task: dict, config: str, run: int, injections: list[dict]) -> dict:
+def new_batch_id() -> str:
+    return f"b{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{secrets.token_hex(3)}"
+
+
+def run_trial(client: Client, task: dict, config: str, run: int, injections: list[dict],
+              batch_id: str | None = None) -> dict:
     cfg = CONFIGS[config]
-    trial_id = f"{config}:{task['task_id']}:r{run}"
+    batch_id = batch_id or new_batch_id()
+    trial_id = f"{config}:{task['task_id']}:r{run}:{batch_id}"
     if not is_valid_trial_id(trial_id):
         raise ValueError(f"Invalid generated trial ID: {trial_id!r}")
     started = time.perf_counter()
     record = {
-        "trial_id": trial_id, "config": config, "run": run,
+        "trial_id": trial_id, "batch_id": batch_id, "config": config, "run": run,
         "requested_config": {
             "route_mode": cfg["route_mode"], "gate_mode": cfg["gate"], "relay_mode": cfg["relay"],
         },
@@ -290,12 +297,14 @@ def main(argv: list[str] | None = None) -> int:
     out = args.out or OUT_DIR / f"{args.config}-{stamp}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
     injections = load_jsonl(INJECTIONS)
+    batch_id = new_batch_id()
+    print(f"Batch ID: {batch_id}")
     records = []
     exit_code = 0
     try:
         with out.open("a", encoding="utf-8") as fh:
             for n, (task, run) in enumerate(trials, 1):
-                record = run_trial(client, task, args.config, run, injections)
+                record = run_trial(client, task, args.config, run, injections, batch_id)
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
                 fh.flush()
                 records.append(record)
@@ -325,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
         leakscan.print_summary(summary)
         print(leakscan.report(summary))
         print(f"Leak report: {out.with_suffix('')}.leak.json")
+        if not leakscan.evidence_ok(summary):
+            exit_code = exit_code or 1
     return exit_code
 
 

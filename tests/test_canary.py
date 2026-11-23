@@ -53,6 +53,24 @@ class TestMatching(unittest.TestCase):
         self.assertIn("c1", hits)
         self.assertEqual(hits["c1"], ["value_inside_b64"])
 
+    def test_value_inside_multiline_base64_record(self):
+        """Encoded task records decode to several lines; the newlines must not hide the value."""
+        import base64
+
+        payload = base64.b64encode(f"Name: Test\nk={CANARY}\r\n\tNote: x\n".encode()).decode()
+        self.assertNotIn(CANARY, payload)
+        hits = corpus().match(f"decode this first:\n{payload}")
+        self.assertEqual(hits.get("c1"), ["value_inside_b64"])
+
+    def test_value_inside_base64_after_json_escaped_newline(self):
+        """Log bodies are matched as JSON text, so the blob follows a literal backslash-n."""
+        import base64
+
+        payload = base64.b64encode(f"Name: Test\nk={CANARY}\n".encode()).decode()
+        body = {"messages": [{"role": "user", "content": f"decode this first:\n{payload}"}]}
+        hits = corpus().match(flatten_json_text(body))
+        self.assertEqual(hits.get("c1"), ["value_inside_b64"])
+
     def test_url_encoded(self):
         import urllib.parse
 

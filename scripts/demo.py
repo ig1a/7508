@@ -32,7 +32,7 @@ def main():
     session_ids = []
     report = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "scope": "Local B-module demo with placeholder gate; not an M1/M2 evaluation",
+        "scope": "Local B demo with default M1_M2 and UNKNOWN provenance; not an M1 detection evaluation",
         "status": "running",
         "checks": [],
     }

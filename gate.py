@@ -1,4 +1,4 @@
-"""队友的 M1/M2 接口位置；当前只提供拒绝所有外发的占位关卡。"""
+"""Outbound gate contract and default security implementation."""
 
 from dataclasses import dataclass
 from typing import Protocol
@@ -6,16 +6,24 @@ from typing import Protocol
 
 @dataclass(frozen=True)
 class OutboundRequest:
-    # 不可变对象，关卡检查与发送使用同一份字节。
+    # The exact immutable bytes checked by the gate are the bytes sent by routing.py.
     url: str
     body: bytes
     method: str = "POST"
     headers: tuple[tuple[str, str], ...] = (("Content-Type", "application/json"),)
+    gate_mode: str = "M1_M2"
+    trial_id: str | None = None
+    relay_mode: str = "passive"
 
 
 @dataclass(frozen=True)
 class GateDecision:
     allowed: bool
+    reason_code: str = "UNSPECIFIED"
+    session_label: str = "UNKNOWN"
+    detection_types: tuple[str, ...] = ()
+    inspection_complete: bool = True
+    latency_ms: float = 0.0
 
 
 class ForwardingGate(Protocol):
@@ -24,6 +32,11 @@ class ForwardingGate(Protocol):
 
 
 class PlaceholderGate:
+    """Legacy fail-closed placeholder retained for tests and compatibility."""
+
     def inspect(self, request: OutboundRequest, *, session_id: str) -> GateDecision:
-        # 这不是 M1/M2，也不能作为安全实验结论。
-        return GateDecision(allowed=False)
+        return GateDecision(allowed=False, reason_code="PLACEHOLDER_DENY")
+
+
+# Imported after the protocol definitions to avoid a circular import.
+from security_gateway.engine import SecurityForwardingGate  # noqa: E402

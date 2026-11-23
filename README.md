@@ -1,80 +1,215 @@
-# DASE7508 — BrandAI B 模块
+# DASE7508 — BrandAI Provider-Side Forwarding Gate
 
-本分支实现小组项目中 B 成员负责的助手、会话管理、路由和模型后端。
-当前可演示：本地模型问答 → 多轮记忆 → 提议外部调用 → 占位关卡拒绝 → 内部回退。
+*English version first; the Chinese version follows below under "中文版 (Chinese version)".*
 
-**关卡目前拒绝全部外发，尚未实现 M1/M2。完整中转站和独立外部模型仍需队友接入。**
-本分支的结果是组件验证，不能作为防泄露实验结论。
+DASE7508 Security of Intelligent Systems group project. The research question:
 
-## 环境与首次安装
+> If an LLM service provider places a forwarding gate at its external-call boundary, can it stop
+> confidential prompt content from reaching an untrusted relay or an external AI service, while keeping
+> normal task utility?
 
-已验证环境：Windows、Python 3.14.7、Ollama 0.40.16、RTX 4060 Laptop 8 GB、约 16 GB 内存。
-其他 Python/操作系统版本尚未验证。依赖版本固定在 `requirements.txt`。
+The `feat/a-integration` branch integrates all five modules (A–E) into one runnable testbed. Every
+module's commit history is preserved.
 
-在仓库根目录的 PowerShell 中运行：
+```text
+Runner (A) → Assistant/API (B) → Security Gateway (D) → Relay (C) → Provider (B) → External Ollama
+                     └──── deny / error → Internal Ollama (internal fallback)
+Leak scoring: runner/leakscan.py (A) → relay7508 scan (C);  offline comparisons: evaluation/ (E)
+```
+
+The two Ollama instances run as separate processes on separate ports with the same model weights;
+sessions and ingress logs are kept apart. This is a simulated local boundary, not an independent cloud
+service. All secrets are synthetic.
+
+## Modules
+
+| Module | Responsibility | Main files | Commit author |
+|---|---|---|---|
+| A Threat model, task set, runner | Threat model and seven-configuration design; deterministic task set (120 tasks, 368 canaries) and six relay injections; experiment runner, utility scoring, leak-scan entry point | `docs/threat_model.md`, `docs/task_format.md`, `taskset/`, `data/attacks/`, `runner/` | Yau Hung Kei |
+| B Assistant, routing, provider | FastAPI assistant, sessions, internal/external routing with fallback, independent external provider, end-to-end smoke test | `main.py`, `sessions.py`, `routing.py`, `model_backend.py`, `provider.py`, `integration_stack.py`, `scripts/` | ssss1112-ss |
+| C Relay, leak extraction | Logging relay (passive C1 / active C2), canary leak extractor | `relay7508/`, `docs/PART_C.md` | duan111222333 |
+| D Security Gateway | M1 content detection, M2 session provenance, policy, authentication, audit | `security_gateway/`, `gate.py` | CHANGXUAN SUN |
+| E Offline evaluation | M1 offline detection benchmark, acceptance-count comparison, token-encoding fix for D | `evaluation/` | Elan Li |
+
+## Install
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m spacy download en_core_web_sm
+.\.venv\Scripts\python.exe -m taskset.build
 ollama pull qwen3:4b-instruct-2507-q4_K_M
 ```
 
-也可用 `scripts/setup.ps1` 创建虚拟环境并安装 Python 依赖。
-Ollama 从 https://ollama.com/download/windows 安装，模型约 2.5 GB。
-本机安装路径为 `D:\Ollama`；队友无需使用相同路径，但必须启动本机 Ollama 服务。
-如命令未找到，可新开终端或使用实际安装路径调用 `ollama.exe`。
+`taskset.build` must print `120 tasks, 168 records, 368 canaries`. The generated files in
+`data/generated/` are git-ignored because the synthetic secrets look real; everyone rebuilds them
+locally. Verified with Python 3.13–3.14, Ollama 0.40.16 and qwen3:4b-instruct-2507-q4_K_M on Windows.
 
-## 启动与一键演示
+## Run
 
-终端一：
+The [integration guide](docs/INTEGRATION_GUIDE.md) gives the full steps. In short:
+
+1. **Smoke test (10 fixed scenarios, real models).** Keep the internal Ollama on 11434, start a second
+   Ollama on 11437 (`$env:OLLAMA_HOST = '127.0.0.1:11437'; ollama serve`), then run
+   `.\.venv\Scripts\python.exe scripts/integration_smoke.py`.
+2. **Experiments on the task set.** Start the provider (11436), relay (11435) and assistant (8000), set
+   the same random `BRANDAI_RUNNER_TOKEN` for the assistant and runner, then run for example
+   `.\.venv\Scripts\python.exe -m runner.run --config C1-M2 --runs 5`. After every C1/C2 batch the
+   runner scores leakage with module C's extractor and writes `.leak.json` / `.leak.csv` next to the
+   results in `reports/runs/`.
+3. **Utility baseline.** `.\.venv\Scripts\python.exe -m runner.run --config C0` (assistant only).
+
+Basic assistant usage is in [QUICKSTART.md](QUICKSTART.md); the HTTP and gate contracts are in
+[INTEGRATION.md](INTEGRATION.md).
+
+## Experiment design
+
+Seven preregistered configurations form the main matrix (120 tasks × 7 × 5 runs = 4,200 trials):
+C0 (internal only), C1-none / C1-M1 / C1-M2 (passive relay), C2-none / C2-M1 / C2-M2 (active relay).
+`C1-M1_M2` and `C2-M1_M2` test the deployed combined policy and are reported separately. Details are
+in the [threat model](docs/threat_model.md) §7.
+
+## Verification
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m unittest discover -v
 ```
 
-保持终端一运行，在终端二执行：
+| Check | Result | Scope |
+|---|---|---|
+| Automated tests on `feat/a-integration` | 129/129 pass, none skipped (2026-11-23) | Model inference uses stand-ins; HTTP stack, gateway, relay, provider and real M1 detectors are real |
+| Real two-model smoke test | 10/10 scenarios (2026-11-22, B's commit `bf15667`) | Fixed fictional scenarios; [validation record](docs/B_VALIDATION_20261122.md); not re-run on this branch |
+| C0 pilot utility | 84/108; public 38/40 | Historical aggregate in `evaluation/results/`, not re-run |
+| M1 offline detection | Confidential 61/80; public false positives 5/40 | Detection rate on the task set, not a leak rate |
 
-```powershell
-.\.venv\Scripts\python.exe scripts/demo.py
-```
+GitHub Actions currently runs only module C's tests (`tests/`); run the full suite locally.
 
-已有后端占用 8000 端口时不必重复启动。开发时可加 `--reload`，但修改代码会清空内存会话。
-对应 PowerShell 脚本为 `scripts/start.ps1` 和 `scripts/demo.ps1`。
-若电脑的脚本执行策略阻止 `.ps1`，直接使用上述 Python 命令，无需修改系统策略。
+## Current status and open items
 
-演示依次检查内部路径、跨轮记忆、会话隔离、关卡拒绝后的内部回退和会话删除，
-只使用固定虚构资料，最后清理自身创建的会话。报告写入 `reports/demo.json`，不纳入 Git。
-成功时显示五条 `PASS` 和 `Result: passed`。首次模型加载可能明显慢于后续问答。
+- The full 4,200-trial matrix has not been run yet, so there is no headline leak-rate result.
+- The relay appends one fixed injection (INJ-01). The task set defines six, including a prepended one
+  (INJ-03) and label laundering (INJ-04, property P5); the relay must support them, or the threat model
+  must be narrowed, before C2 results are reported.
+- The leak extractor matches exact, case-folded, whitespace-removed, URL-encoded and base64 forms;
+  near-match and semantic leakage still need a separate (manual) review.
+- Single-process, local-only service: no user authentication, do not add workers.
 
-手动操作页面：http://127.0.0.1:8000/docs 。示例见 [QUICKSTART.md](QUICKSTART.md)。
+More detail is in the [threat model](docs/threat_model.md) §8.
 
-## 自动检查（不需要下载模型）
+## Documentation
 
-```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_backend test_routing
-```
-
-16 项检查使用模拟模型和本机临时 HTTP 接收器，覆盖会话隔离、上下文保留、拒绝不发送、
-获准请求字节一致、关卡异常、后续轮次重新检查、重定向阻止及外部失败回退。
-运行测试需要允许访问本机临时端口，不访问第三方模型。
-
-## 文件分工
-
-| 文件 | 作用 |
+| Document | Contents |
 |---|---|
-| `main.py` | API 输入校验、会话处理和响应字段 |
-| `sessions.py` | 内存历史、四轮限制、会话删除 |
-| `model_backend.py` | 构建 Ollama 请求，发送和解析结果 |
-| `routing.py` | 内部/外部候选路由、检查后发送、内部回退 |
-| `gate.py` | 关卡接口和默认拒绝占位实现 |
-| `test_backend.py`、`test_routing.py` | 组件和本地传输检查 |
-| `scripts/demo.py` | 调用真实模型的一键演示 |
+| [docs/threat_model.md](docs/threat_model.md) | Assets, boundaries, adversary, assumptions, properties, configurations, open gaps |
+| [docs/task_format.md](docs/task_format.md) | Task, corpus, canary and injection formats |
+| [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md) | Running the integrated stack, ports, reports |
+| [INTEGRATION.md](INTEGRATION.md) | HTTP, gate, routing and audit interface specification |
+| [QUICKSTART.md](QUICKSTART.md) | Using the assistant on its own |
+| [docs/PART_C.md](docs/PART_C.md) | Relay and leak extractor |
+| [docs/B_VALIDATION_20261122.md](docs/B_VALIDATION_20261122.md) | Real-model integration validation record |
 
-队友接口及尚未完成事项见 [INTEGRATION.md](INTEGRATION.md)。
-内存会话要求单进程，不能添加多个 workers；服务未实现用户鉴权，仅绑定本机使用。
-这是开发原型，尚不具备完整实验的可信来源标签、持续审计与所有对照配置。
+## AI use
 
-## AI 使用记录
+This project used AI assistance for design, coding, debugging and documentation. Each responsible member
+must understand and review their own contribution, record verification commands and results in pull
+requests, and disclose AI assistance and each member's actual contribution in the final report. Passing
+automated checks covers only the tested scenarios; security conclusions must come from the controlled
+experiments and their retained evidence.
 
-本分支由 AI 辅助实现和调试。负责成员需理解代码、复核结果，并按课程要求在最终提交中如实披露。
-检查通过只代表所覆盖场景；完整实验结果由后续集成运行产生。
+---
+
+## 中文版 (Chinese version)
+
+### DASE7508 — BrandAI 服务商侧转发关卡
+
+DASE7508 Security of Intelligent Systems 小组项目。研究问题：
+
+> LLM 服务商在外部调用边界加入转发关卡后，能否阻止机密提示词到达不可信中转站或外部 AI 服务，同时保留正常任务效用？
+
+`feat/a-integration` 分支把五个模块（A–E）集成为一个可运行的实验平台，并保留各模块的提交历史。
+
+```text
+Runner (A) → Assistant/API (B) → Security Gateway (D) → Relay (C) → Provider (B) → External Ollama
+                     └──── deny / error → Internal Ollama (internal fallback)
+Leak scoring: runner/leakscan.py (A) → relay7508 scan (C);  offline comparisons: evaluation/ (E)
+```
+
+两个 Ollama 使用独立进程/端口和相同模型权重，会话及接收日志分开。这是本地模拟边界，不是独立云服务。所有秘密均为合成数据。
+
+### 模块
+
+| 模块 | 职责 | 主要文件 | 提交作者 |
+|---|---|---|---|
+| A 威胁模型、任务集、Runner | 威胁模型和七配置设计；确定性任务集（120 个任务、368 个 canary）和六种中转站注入；实验 Runner、效用评分、泄漏扫描入口 | `docs/threat_model.md`、`docs/task_format.md`、`taskset/`、`data/attacks/`、`runner/` | Yau Hung Kei |
+| B 助手、路由、Provider | FastAPI 助手、会话、内部/外部路由及回退、独立外部 Provider、端到端 smoke 测试 | `main.py`、`sessions.py`、`routing.py`、`model_backend.py`、`provider.py`、`integration_stack.py`、`scripts/` | ssss1112-ss |
+| C 中转站、泄漏提取 | 记录型中转站（被动 C1 / 主动 C2）、canary 泄漏提取器 | `relay7508/`、`docs/PART_C.md` | duan111222333 |
+| D Security Gateway | M1 内容检测、M2 会话来源标签、策略、认证、审计 | `security_gateway/`、`gate.py` | CHANGXUAN SUN |
+| E 离线评估 | M1 离线检测 benchmark、接受计数比较、D 的令牌编码修正 | `evaluation/` | Elan Li |
+
+### 安装
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m spacy download en_core_web_sm
+.\.venv\Scripts\python.exe -m taskset.build
+ollama pull qwen3:4b-instruct-2507-q4_K_M
+```
+
+`taskset.build` 应显示 `120 tasks, 168 records, 368 canaries`。`data/generated/` 中的合成秘密外观逼真，因此不提交到 Git，每人在本机重新生成。已在 Windows、Python 3.13–3.14、Ollama 0.40.16、qwen3:4b-instruct-2507-q4_K_M 上验证。
+
+### 运行
+
+完整步骤见[集成指南](docs/INTEGRATION_GUIDE.md)。简要如下：
+
+1. **Smoke 测试（10 个固定场景，真实模型）**：内部 Ollama 保持在 11434，另启动一个 Ollama 在 11437（`$env:OLLAMA_HOST = '127.0.0.1:11437'; ollama serve`），然后运行 `.\.venv\Scripts\python.exe scripts/integration_smoke.py`。
+2. **任务集实验**：启动 Provider（11436）、Relay（11435）和 Assistant（8000），为 Assistant 和 Runner 设置同一个随机 `BRANDAI_RUNNER_TOKEN`，再运行例如 `.\.venv\Scripts\python.exe -m runner.run --config C1-M2 --runs 5`。每个 C1/C2 批次结束后，Runner 调用 C 模块的提取器评分泄漏，并在 `reports/runs/` 的结果文件旁写出 `.leak.json` / `.leak.csv`。
+3. **效用基线**：`.\.venv\Scripts\python.exe -m runner.run --config C0`（只需 Assistant）。
+
+助手的基本用法见 [QUICKSTART.md](QUICKSTART.md)；HTTP 与关卡契约见 [INTEGRATION.md](INTEGRATION.md)。
+
+### 实验设计
+
+七个预注册配置构成主矩阵（120 个任务 × 7 × 5 次 = 4,200 个 trial）：C0（仅内部）、C1-none / C1-M1 / C1-M2（被动中转）、C2-none / C2-M1 / C2-M2（主动中转）。`C1-M1_M2` 和 `C2-M1_M2` 用于检验实际部署的组合策略，单独报告。详见[威胁模型](docs/threat_model.md) §7。
+
+### 验证
+
+```powershell
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m unittest discover -v
+```
+
+| 检查 | 结果 | 范围 |
+|---|---|---|
+| `feat/a-integration` 自动测试 | 129/129 通过，无跳过（2026-11-23） | 模型推理使用替身；HTTP 链路、Gateway、Relay、Provider 和真实 M1 检测器均为实际实现 |
+| 真实双模型 smoke 测试 | 10/10 场景（2026-11-22，B 的提交 `bf15667`） | 固定虚构场景；见[验证记录](docs/B_VALIDATION_20261122.md)；本分支未重跑 |
+| C0 pilot 效用 | 84/108；Public 38/40 | `evaluation/results/` 的历史聚合结果，未重跑 |
+| M1 离线检测 | Confidential 61/80；Public 误报 5/40 | 任务集上的检测率，不是泄漏率 |
+
+GitHub Actions 目前只运行 C 模块的测试（`tests/`）；完整测试请在本机运行。
+
+### 当前状态与待办
+
+- 尚未运行完整的 4,200-trial 矩阵，因此还没有总体泄漏率结果。
+- 中转站只追加一条固定注入（INJ-01）。任务集定义了六种，包括前置注入（INJ-03）和标签洗白（INJ-04，对应属性 P5）；报告 C2 结果前，需要让中转站支持这些注入，或收窄威胁模型。
+- 泄漏提取器匹配原文、大小写折叠、去空白、URL 编码和 base64 形式；近似匹配和语义泄漏仍需单独（人工）检查。
+- 服务为单进程、仅限本机：没有用户鉴权，不要增加 workers。
+
+更多细节见[威胁模型](docs/threat_model.md) §8。
+
+### 文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/threat_model.md](docs/threat_model.md) | 资产、边界、攻击者、假设、安全属性、实验配置、待解决缺口 |
+| [docs/task_format.md](docs/task_format.md) | 任务、语料、canary 和注入格式 |
+| [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md) | 运行集成链路、端口、报告 |
+| [INTEGRATION.md](INTEGRATION.md) | HTTP、关卡、路由和审计接口说明 |
+| [QUICKSTART.md](QUICKSTART.md) | 单独使用助手 |
+| [docs/PART_C.md](docs/PART_C.md) | 中转站与泄漏提取器 |
+| [docs/B_VALIDATION_20261122.md](docs/B_VALIDATION_20261122.md) | 真实模型集成验证记录 |
+
+### AI 使用记录
+
+本项目使用 AI 协助设计、编码、调试和文档整理。各负责成员必须理解并人工复核自己的贡献，在 pull request 中记录验证命令和结果，并在最终报告中如实说明 AI 协助及每位成员的实际贡献。自动检查通过只代表所覆盖场景；安全结论必须来自受控实验及保留的证据。

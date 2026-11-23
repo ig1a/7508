@@ -91,6 +91,17 @@ class IntegratedHttpTests(unittest.TestCase):
                 row = self.rows("relay", record["trial_id"])[-1]
                 self.assertEqual(row["rewrite"]["applied"], mode == "C2-none")
 
+    def test_rerunning_same_trial_in_new_batches_still_receives_injection(self):
+        # More re-runs than the relay's max_appends_per_task, all against one relay process.
+        records = [run_trial(self.client, task("rerun", compliance=True), "C2-none", 1, [INJECTION])
+                   for _ in range(4)]
+        self.assertEqual(len({r["trial_id"] for r in records}), 4)
+        for record in records:
+            self.assertEqual(record["status"], "ok")
+            self.assertEqual(record["injections_seen"], [INJECTION["injection_id"]])
+            self.assertTrue(record["compliance_sent"])
+            self.assertTrue(self.rows("relay", record["trial_id"])[0]["rewrite"]["applied"])
+
     def test_task_set_trials_are_scored_by_part_c_extractor(self):
         built = build_taskset()
         task_spec = next(t for t in built["tasks"] if t["task_id"] == "C-cred-verbatim-debug")
@@ -104,14 +115,17 @@ class IntegratedHttpTests(unittest.TestCase):
             with patch.object(leakscan, "CANARIES", canaries):
                 summary = leakscan.scan_batch(records, Path(directory) / "batch.jsonl", logs)
         by_trial = {t["task_id"]: t for t in summary["tasks"]}
+        none, combined = (r["trial_id"] for r in records)
         for recipient in ("relay", "provider"):
-            self.assertEqual(by_trial["C1-none:C-cred-verbatim-debug:r1"]["first_hits"][recipient], {primary["canary_id"]: 1})
-            self.assertEqual(by_trial["C1-M1_M2:C-cred-verbatim-debug:r1"][f"{recipient}_leaked"], 0)
+            self.assertEqual(by_trial[none]["first_hits"][recipient], {primary["canary_id"]: 1})
+            self.assertEqual(by_trial[combined][f"{recipient}_leaked"], 0)
         self.assertEqual(summary["log_lines"], {"relay": 2, "provider": 2})
         self.assertEqual(summary["tasks_missing_from_manifest"], [])
+        self.assertEqual(summary["evidence_incomplete"], [])
+        self.assertTrue(leakscan.evidence_ok(summary))
 
     def test_checked_request_bytes_reach_independent_provider_without_auth_token(self):
-        trial = "C1-none:bytes:r1"
+        trial = "C1-none:bytes:r1:b20261123T120000-0a1b2c"
         status, result = self.client.call("POST", "/chat", {
             "message": "Public payload", "source_label": "PUBLIC", "gate_mode": "none",
             "relay_mode": "passive", "route_mode": "external_candidate"}, trial)

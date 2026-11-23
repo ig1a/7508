@@ -102,10 +102,10 @@ class M1PayloadScopeTests(unittest.TestCase):
                         url="http://127.0.0.1:11435/api/chat",
                         body=b'{"model":"model-long-example","messages":[{"role":"user","content":"hello"}]}',
                         headers=(("Content-Type", "application/json"),
-                                 ("X-Trial-Id", "C1-M1:P-api-question:r1"),
+                                 ("X-Trial-Id", "C1-M1:P-api-question:r1:b20261123T120000-0a1b2c"),
                                  ("X-Relay-Mode", "active")),
                         gate_mode="M1",
-                        trial_id="C1-M1:P-api-question:r1",
+                        trial_id="C1-M1:P-api-question:r1:b20261123T120000-0a1b2c",
                     )
                     result = gate.inspect(req, session_id=sid)
                     self.assertTrue(result.allowed)

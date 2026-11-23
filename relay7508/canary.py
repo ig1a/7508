@@ -33,13 +33,15 @@ from typing import Iterable, Sequence
 
 # A base64 run long enough to hold a secret; short runs only create noise.
 _B64_RUN = re.compile(r"[A-Za-z0-9+/_-]{12,}={0,2}")
+# Log bodies are searched as JSON text, where "\n" before a blob would otherwise join the run as "n".
+_JSON_ESCAPE = re.compile(r"\\(?:[nrtbf\"\\/]|u[0-9a-fA-F]{4})")
 
 MIN_STRIPPED_LEN = 6  # below this, whitespace-insensitive matching would be meaningless
 
 
 def _b64_candidates(text: str) -> Iterable[str]:
     """Yield the decoded bodies of every plausible base64 run in ``text``."""
-    for run in _B64_RUN.findall(text):
+    for run in _B64_RUN.findall(_JSON_ESCAPE.sub(" ", text)):
         padded = run + "=" * (-len(run) % 4)
         for decoder in (base64.b64decode, base64.urlsafe_b64decode):
             try:
@@ -50,7 +52,8 @@ def _b64_candidates(text: str) -> Iterable[str]:
                 decoded = raw.decode("utf-8")
             except UnicodeDecodeError:
                 continue
-            if decoded and decoded.isprintable():
+            # Decoded records are often multi-line; newlines and tabs are not "printable".
+            if decoded and all(ch.isprintable() or ch.isspace() for ch in decoded):
                 yield decoded
 
 

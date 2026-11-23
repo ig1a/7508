@@ -96,7 +96,7 @@ def collect(canaries: CanarySet,
             if isinstance(opening, str) and opening.strip():
                 by_opening[conversation_id(opening)] = task_id
 
-    if tasks:
+    if tasks is not None:
         for task_id, spec in tasks.items():
             result_for(task_id)
     else:
